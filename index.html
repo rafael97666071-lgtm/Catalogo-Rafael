@@ -241,7 +241,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
     <p class="small">Os controles administrativos ficam embaixo para não atrapalhar a navegação do catálogo. O cadastro e as alterações exigem login de administrador.</p>
   </div>
 
-  <div class="notice"><b>🔗 Catálogo do cliente:</b> o botão “Compartilhar catálogo” cria o endereço de visualização. Para esse link funcionar publicamente em qualquer celular e manter os produtos sincronizados, esta aplicação precisa ser publicada em uma hospedagem online com banco de dados. Nesta versão local, os dados ficam neste aparelho.</div>
+  <div class="notice"><b>🔗 Catálogo do cliente:</b> o botão “Compartilhar catálogo” cria o endereço de visualização. Os produtos e configurações deste catálogo são sincronizados com o banco de dados na nuvem quando o administrador está conectado.</div>
 
   <div style="margin:15px 0;padding:15px;border:1px solid var(--line);border-radius:12px;background:#fafafa">
     <strong>📱 WhatsApp da loja</strong>
@@ -386,7 +386,7 @@ async function remoteLoadWhatsApp(){
 }
 async function remoteSaveWhatsApp(wa){
   if(!authToken())throw new Error('LOGIN_REQUIRED');
-  await sbFetch('/catalog_settings?on_conflict=id',{method:'POST',headers:sbHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify({id:'default',whatsapp:wa})});
+  await sbFetch('/catalog_settings?on_conflict=id',{method:'POST',headers:sbHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify({id:1,whatsapp:wa})});
 }
 async function syncWithSupabase(){
   try{
