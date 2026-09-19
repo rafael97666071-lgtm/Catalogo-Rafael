@@ -327,9 +327,15 @@ function loadAuthSession(){try{const raw=localStorage.getItem('catalogo_supabase
 function saveAuthSession(session){authSession=session||null;try{if(session)localStorage.setItem('catalogo_supabase_session',JSON.stringify(session));else localStorage.removeItem('catalogo_supabase_session')}catch(e){}}
 function authToken(){return authSession?.access_token||''}
 function sbHeaders(extra={}){const h={apikey:SUPABASE_PUBLISHABLE_KEY,'Content-Type':'application/json'};const token=authToken();if(token)h.Authorization='Bearer '+token;return Object.assign(h,extra)}
-async function sbFetch(path,options={}){
+async function sbFetch(path,options={},allowRefresh=true){
   const opts=Object.assign({},options,{headers:Object.assign({},sbHeaders(),options.headers||{})});
   const r=await fetch(SUPABASE_REST+path,opts);
+  if(r.status===401 && allowRefresh && authSession?.refresh_token){
+    const refreshed=await refreshAuthSession();
+    if(refreshed){
+      return sbFetch(path,options,false);
+    }
+  }
   if(!r.ok){let t='';try{t=await r.text()}catch(e){} throw new Error('Supabase '+r.status+(t?' — '+t:''));}
   if(r.status===204)return null;
   return r.json();
@@ -364,8 +370,10 @@ function closeAdminLogin(){const m=document.getElementById('adminLoginModal');if
 function signOutAdmin(){saveAuthSession(null);closeAdmin();document.getElementById('adminLoginStatus')?.replaceChildren();alert('Você saiu da administração.')}
 async function ensureAdminSession(){
   loadAuthSession();
-  if(authSession?.access_token)return true;
-  if(authSession?.refresh_token&&await refreshAuthSession())return true;
+  if(!authSession)return false;
+  const exp=Number(authSession.expires_at||0);
+  if(authSession?.access_token && (!exp || Date.now()/1000 < exp-30))return true;
+  if(authSession?.refresh_token && await refreshAuthSession())return true;
   return false;
 }
 function productToRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subfinal:p.subsubcategory||'',price:num(p.price),old_price:p.oldPrice?num(p.oldPrice):null,color:p.color||'',variant_group:p.variantGroup||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[])}}
@@ -454,7 +462,7 @@ async function saveDB(){
     if(!localOk) throw new Error('Não foi possível salvar neste aparelho. O armazenamento do navegador está indisponível ou cheio. Faça um backup e tente novamente.');
   }
   // Depois do salvamento local, sincroniza a lista com a nuvem quando possível.
-  if(authToken()){try{await remoteUpsertProducts(products);supabaseOnline=true}catch(e){console.warn('Falha ao sincronizar produtos com Supabase:',e);const st=document.getElementById('cloudStatus');if(st)st.textContent='⚠️ Falha ao sincronizar: '+e.message}}
+  if(await ensureAdminSession()){try{await remoteUpsertProducts(products);supabaseOnline=true}catch(e){console.warn('Falha ao sincronizar produtos com Supabase:',e);const st=document.getElementById('cloudStatus');if(st)st.textContent='⚠️ Falha ao sincronizar: '+e.message}}
   return true;
 }
 async function syncStorageOnStartup(){
