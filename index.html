@@ -326,7 +326,7 @@ let authSession=null;
 function loadAuthSession(){try{const raw=localStorage.getItem('catalogo_supabase_session');authSession=raw?JSON.parse(raw):null}catch(e){authSession=null}}
 function saveAuthSession(session){authSession=session||null;try{if(session)localStorage.setItem('catalogo_supabase_session',JSON.stringify(session));else localStorage.removeItem('catalogo_supabase_session')}catch(e){}}
 function authToken(){return authSession?.access_token||''}
-function sbHeaders(extra={}){return Object.assign({apikey:SUPABASE_PUBLISHABLE_KEY,Authorization:'Bearer '+(authToken()||SUPABASE_PUBLISHABLE_KEY),'Content-Type':'application/json'},extra)}
+function sbHeaders(extra={}){const h={apikey:SUPABASE_PUBLISHABLE_KEY,'Content-Type':'application/json'};const token=authToken();if(token)h.Authorization='Bearer '+token;return Object.assign(h,extra)}
 async function sbFetch(path,options={}){
   const opts=Object.assign({},options,{headers:Object.assign({},sbHeaders(),options.headers||{})});
   const r=await fetch(SUPABASE_REST+path,opts);
@@ -1132,4 +1132,4 @@ document.addEventListener('click', function(e){
 }, true);
 </script>
 </body>
- </html>
+</html>
