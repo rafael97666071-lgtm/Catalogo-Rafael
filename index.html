@@ -368,7 +368,7 @@ async function ensureAdminSession(){
   if(authSession?.refresh_token&&await refreshAuthSession())return true;
   return false;
 }
-function productToRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subfinal:p.subsubcategory||'',price:p.price||'',old_price:p.oldPrice||'',color:p.color||'',variant_group:p.variantGroup||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[])}}
+function productToRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subfinal:p.subsubcategory||'',price:num(p.price),old_price:p.oldPrice?num(p.oldPrice):null,color:p.color||'',variant_group:p.variantGroup||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[])}}
 function productFromRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subsubcategory:p.subfinal||'',price:p.price||'',oldPrice:p.old_price||'',color:p.color||'',variantGroup:p.variant_group||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[]),photo:Array.isArray(p.photos)&&p.photos.length?p.photos[0]:(p.photo||'')}}
 async function remoteLoadProducts(){
   const rows=await sbFetch('/products?select=*&order=created_at.asc');
@@ -454,7 +454,7 @@ async function saveDB(){
     if(!localOk) throw new Error('Não foi possível salvar neste aparelho. O armazenamento do navegador está indisponível ou cheio. Faça um backup e tente novamente.');
   }
   // Depois do salvamento local, sincroniza a lista com a nuvem quando possível.
-  if(authToken()){try{await remoteUpsertProducts(products);supabaseOnline=true}catch(e){console.warn('Falha ao sincronizar produtos com Supabase:',e)}}
+  if(authToken()){try{await remoteUpsertProducts(products);supabaseOnline=true}catch(e){console.warn('Falha ao sincronizar produtos com Supabase:',e);const st=document.getElementById('cloudStatus');if(st)st.textContent='⚠️ Falha ao sincronizar: '+e.message}}
   return true;
 }
 async function syncStorageOnStartup(){
