@@ -14,7 +14,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .headerViews{display:flex;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex-shrink:0}
 .headerViews button{border:0;padding:8px 10px;font-weight:800;background:#fff;color:#555;white-space:nowrap}
 .headerViews button.active{background:var(--blue);color:#fff}
-
 .topActions{display:flex;gap:8px;flex-wrap:wrap}.topActions button,.chip{border:0;border-radius:9px;padding:9px 12px;font-weight:700}
 .white{background:#fff;color:#111}.blue{background:var(--blue);color:#fff}.red{background:var(--red);color:#fff}.ghost{background:#ffffff18;color:#fff;border:1px solid #ffffff33!important}
 .wrap{max-width:1250px;margin:auto;padding:18px}
@@ -74,7 +73,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .listView .gallery{grid-column:1/2;grid-row:2;display:none}
 .listView .actions{max-width:520px}
 @media(max-width:700px){
- .deptGrid{grid-template-columns:1fr}.hero{grid-template-columns:1fr}.heroBadge{display:none}.form{grid-template-columns:1fr}.full{grid-column:auto}.logoText{font-size:21px;margin-left:2px}.top{height:54px;padding:7px 8px}.headerViews button{padding:7px 8px;font-size:12px}
+ .deptGrid{grid-template-columns:1fr}.hero{grid-template-columns:1fr}.heroBadge{display:none}.form{grid-template-columns:1fr}.full{grid-column:auto}.logoText{font-size:25px}.top{height:54px;padding:9px}
  .listView .card{grid-template-columns:125px 1fr;min-height:150px}.listView .pic{min-height:150px}.listView .body{padding:11px}.listView .name{font-size:16px}.listView .price{font-size:21px}.listView .actions{flex-wrap:wrap}.listView .actions button{min-width:100px}
 .dimensions{padding:9px 2px}
 .dimension{padding:4px 3px}
@@ -143,6 +142,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 @media(max-width:900px){.grid.view-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important}}
 @media(max-width:700px){.grid.view-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.grid.view-grid .card{min-width:0!important;width:100%!important}.grid.view-grid .body{padding:10px!important}.grid.view-grid .name{font-size:14px!important;line-height:1.2}.grid.view-grid .price{font-size:20px!important}.grid.view-grid .desc{font-size:11px!important;min-height:30px}.grid.view-grid .actions button{padding:8px 4px!important;font-size:11px}}
 
+/* GRADE: somente os números das medidas ficam um pouco menores */
+.grid.view-grid .dimension strong{font-size:16px!important}
+
 /* LISTA: um produto completo por linha */
 .grid.view-list{display:grid!important;grid-template-columns:1fr!important;gap:18px!important}
 .grid.view-list .card{display:grid!important;grid-template-columns:minmax(280px,42%) 1fr!important;width:100%!important;min-width:0!important}
@@ -199,6 +201,43 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .detailColorSwatch{border:1px solid #d8dbe1;background:#fff;border-radius:10px;padding:9px 12px;font-weight:800}
 .detailColorSwatch.active{border:2px solid var(--blue);padding:8px 11px;color:var(--blue)}
 
+
+<style>
+/* Medidas: ajuste isolado por visualização */
+@media(max-width:700px){
+  
+  
+  
+}
+
+<style>
+/* PADRÃO ÚNICO DAS MEDIDAS — Grade, Lista e produto aberto */
+.dimension strong,
+.detailDimension strong{
+  font-size:16px!important;
+}
+
+<style>
+/* Padrão final das medidas:
+   Grade = oculta
+   Lista = padrão
+   Produto aberto = um pouco maior */
+.grid.view-grid .dimensions{
+  display:none!important;
+}
+.detailDimension strong{
+  font-size:20px!important;
+}
+
+<style>
+/* Grade: não exibir o quadro de medidas nos cards */
+.grid.view-grid .dimensions{
+  display:none!important;
+}
+</style>
+</style>
+</style>
+</style>
 </style>
 </head>
 <body>
@@ -293,7 +332,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
     <div><label>Parcelamento<input id="installments" placeholder="10x sem juros"></label></div>
     <div class="full">
       <label>Fotos do produto — você pode selecionar várias
-        <input id="photo" type="file" accept="image/*" multiple onchange="previewMany(event)">
+        <input id="photo" type="file" accept="image/*" multiple onclick="this.value=''" onchange="previewMany(event)">
       </label>
       <div id="previewGallery" class="photoEditor"></div>
       <div class="photoEditorHint">Toque em uma foto para selecioná-la. A lixeira vermelha aparecerá; toque nela para excluir somente essa foto.</div>
@@ -638,18 +677,37 @@ function renderPhotoEditor(){
   });
 }
 async function previewMany(e){
-  const files=[...e.target.files];
+  const input=e.target;
+  const files=[...input.files];
   if(!files.length)return;
+
+  // Limpa o valor imediatamente. No Android/Chrome isso é importante:
+  // permite escolher novamente exatamente o mesmo arquivo depois de excluí-lo.
+  input.value='';
+
   try{
-    const added=await Promise.all(files.map(file64Compressed));
-    formPhotos.push(...added.filter(Boolean));
-    renderPhotoEditor();
+    const added=[];
+    for(const file of files){
+      try{
+        const photo=await file64Compressed(file);
+        if(photo) added.push(photo);
+      }catch(err){
+        console.error('Falha ao carregar foto:',file.name,err);
+      }
+    }
+
+    // Nunca substitui as fotos já carregadas: apenas acrescenta as novas.
+    if(added.length){
+      formPhotos.push(...added);
+      renderPhotoEditor();
+    }
+
+    if(added.length<files.length){
+      alert('Não foi possível carregar uma ou mais fotos. As fotos já carregadas foram mantidas.');
+    }
   }catch(err){
     console.error(err);
-    alert('Não foi possível carregar uma ou mais fotos.');
-  }finally{
-    // Limpa o input para permitir selecionar novamente a mesma foto, se necessário.
-    e.target.value='';
+    alert('Não foi possível carregar as novas fotos. As fotos já carregadas foram mantidas.');
   }
 }
 function file64(f){return new Promise((resolve,reject)=>{if(!f)return resolve('');const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(f)})}
@@ -1009,6 +1067,10 @@ function setView(mode){
     lb.style.background = currentView === 'list' ? 'var(--blue)' : '#fff';
     lb.style.color = currentView === 'list' ? '#fff' : '#555';
   }
+
+  // Reconstrói os cards ao trocar de visualização.
+  // Isso garante que Grade não crie medidas e Lista crie as medidas normalmente.
+  render();
 }
 function render(){
   renderChips();
@@ -1037,7 +1099,7 @@ function render(){
     ${photos.length>1?`<div class="gallery">${photos.map((s,i)=>`<img src="${s}" class="${i===0?'active':''}" onclick="changePhoto('${p.id}',${i})">`).join('')}</div>`:''}
     <div class="body">${breadcrumbHTML(p)}<div class="name">${esc(p.name)}</div><div class="desc">${esc(p.description)}</div>
     ${p.oldPrice?`<div class="old">${brl(p.oldPrice)}</div>`:''}<div class="price">${brl(p.price)}</div>
-    ${(p.width||p.height||p.depth)?`<div class="dimensions">
+    ${(currentView==='list' && (p.width||p.height||p.depth))?`<div class="dimensions">
       ${p.width?`<div class="dimension"><div class="dimIcon">↔</div><div class="dimLabel">Largura</div><strong>${esc(p.width)}</strong></div>`:''}
       ${p.height?`<div class="dimension"><div class="dimIcon">↕</div><div class="dimLabel">Altura</div><strong>${esc(p.height)}</strong></div>`:''}
       ${p.depth?`<div class="dimension"><div class="dimIcon">↗</div><div class="dimLabel">Profundidade</div><strong>${esc(p.depth)}</strong></div>`:''}
