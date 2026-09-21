@@ -420,7 +420,8 @@ function closeAdminLogin(){const m=document.getElementById('adminLoginModal');if
 function signOutAdmin(){saveAuthSession(null);closeAdmin();document.getElementById('adminLoginStatus')?.replaceChildren();alert('Você saiu da administração.')}
 async function ensureAdminSession(){
   loadAuthSession();
-  if(authSession?.access_token)return true;
+  const exp=Number(authSession?.expires_at||0);
+  if(authSession?.access_token && (!exp || Date.now()/1000 < exp-30))return true;
   if(authSession?.refresh_token&&await refreshAuthSession())return true;
   return false;
 }
@@ -446,6 +447,8 @@ async function remoteSaveWhatsApp(wa){
 }
 async function syncWithSupabase(){
   try{
+    // Garante que um token expirado seja renovado antes de consultar a nuvem.
+    await ensureAdminSession();
     const remote=await remoteLoadProducts();
     if(remote.length){products=remote;await idbPutProducts(products);try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){};render();}
     else if(products.length && authToken()){await remoteUpsertProducts(products)}
