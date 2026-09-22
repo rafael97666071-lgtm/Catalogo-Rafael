@@ -534,13 +534,19 @@ async function flushSyncQueue(){
   if(!q.upsert.length&&!q.remove.length)return {synced:true,pending:0};
 
   const ready=await ensureAdminSession();
-  if(!ready)return {synced:false,pending:pendingSyncCount(),reason:'LOGIN_REQUIRED'};
+  if(!ready)return {synced:false,pending:pendingSyncCount(),reason:'LOGIN_REQUIRED',error:'Faça login como administrador para sincronizar.'};
 
-  // Exclusões primeiro: evita que um produto recém-removido volte durante a mesclagem.
+  // Exclusões primeiro. Se a nuvem rejeitar, preservamos a fila e não deixamos
+  // a falha de rede/Supabase impedir o salvamento local.
   for(const id of [...q.remove]){
-    await remoteDeleteProduct(id);
-    dequeueRemoval(id);
-    markDeleted(id);
+    try{
+      await remoteDeleteProduct(id);
+      dequeueRemoval(id);
+      markDeleted(id);
+    }catch(e){
+      console.error('Falha ao excluir na nuvem:',e);
+      return {synced:false,pending:pendingSyncCount(),reason:'CLOUD_ERROR',error:e?.message||String(e)};
+    }
   }
 
   // Envia somente os produtos realmente pendentes, em vez de reenviar todo o catálogo.
@@ -550,9 +556,14 @@ async function flushSyncQueue(){
       dequeueUpsert(id);
       continue;
     }
-    await remoteUpsertProducts([p]);
-    dequeueUpsert(id);
-    clearDeleted(id);
+    try{
+      await remoteUpsertProducts([p]);
+      dequeueUpsert(id);
+      clearDeleted(id);
+    }catch(e){
+      console.error('Falha ao sincronizar produto na nuvem:',e);
+      return {synced:false,pending:pendingSyncCount(),reason:'CLOUD_ERROR',error:e?.message||String(e)};
+    }
   }
 
   const left=pendingSyncCount();
@@ -1038,13 +1049,15 @@ async function saveProduct(e){
     render();
     if(syncResult.synced){
       alert('✅ Produto salvo e sincronizado com a nuvem!');
+    }else if(syncResult.reason==='CLOUD_ERROR'){
+      alert('✅ Produto salvo neste aparelho.\n\n⚠️ A nuvem recusou ou não conseguiu receber o produto.\n\nDetalhe técnico: '+(syncResult.error||'erro desconhecido')+'\n\nO produto ficou na fila e será tentado novamente.');
     }else{
       alert('✅ Produto salvo neste aparelho.\n\n⚠️ A sincronização com a nuvem ficou pendente e será tentada novamente automaticamente.');
     }
     openAdmin();
   }catch(err){
     console.error(err);
-    alert('❌ Não foi possível salvar o produto.\n\nO catálogo tentou salvar no armazenamento principal e no banco local do navegador. Se o celular estiver sem espaço, faça um backup e libere espaço.');
+    alert('❌ Não foi possível salvar o produto no aparelho.\n\nDetalhe técnico: '+(err?.message||String(err))+'\n\nNenhuma informação do formulário deve ser considerada sincronizada com a nuvem.');
   }finally{
     if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='💾 Salvar produto'}
   }
