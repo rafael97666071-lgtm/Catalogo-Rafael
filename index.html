@@ -373,6 +373,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 
 <script>
 const KEY='catalogo_completo_v4_hierarquia', WKEY='catalogo_whatsapp', VIEWKEY='catalogo_view';
+const SYNC_QUEUE_KEY='catalogo_sync_queue_v1', DELETED_IDS_KEY='catalogo_deleted_ids_v1';
 // Supabase — chave PUBLISHABLE (segura para uso no navegador quando o RLS está configurado).
 const SUPABASE_URL='https://tuptrzvdqbaoohlerrfz.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY='sb_publishable_s9D9xICwKMA6vNLBO3eD6Q_yvUlMiXd';
@@ -427,6 +428,70 @@ async function ensureAdminSession(){
 }
 function productToRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subsubcategory:p.subsubcategory||'',price:p.price||'',old_price:p.oldPrice||'',color:p.color||'',variant_group:p.variantGroup||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[])}}
 function productFromRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subsubcategory:p.subsubcategory||'',price:p.price||'',oldPrice:p.old_price||'',color:p.color||'',variantGroup:p.variant_group||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[]),photo:Array.isArray(p.photos)&&p.photos.length?p.photos[0]:(p.photo||'')}}
+
+function readSyncQueue(){
+  try{
+    const raw=localStorage.getItem(SYNC_QUEUE_KEY);
+    const q=raw?JSON.parse(raw):{};
+    return {
+      upsert:Array.isArray(q.upsert)?[...new Set(q.upsert.map(String))]:[],
+      remove:Array.isArray(q.remove)?[...new Set(q.remove.map(String))]:[]
+    };
+  }catch(e){return {upsert:[],remove:[]}}
+}
+function writeSyncQueue(q){
+  try{localStorage.setItem(SYNC_QUEUE_KEY,JSON.stringify({
+    upsert:[...new Set((q.upsert||[]).map(String))],
+    remove:[...new Set((q.remove||[]).map(String))]
+  }))}catch(e){console.warn('Não foi possível salvar a fila de sincronização.',e)}
+}
+function readDeletedIds(){
+  try{
+    const raw=localStorage.getItem(DELETED_IDS_KEY);
+    const arr=raw?JSON.parse(raw):[];
+    return new Set(Array.isArray(arr)?arr.map(String):[]);
+  }catch(e){return new Set()}
+}
+function writeDeletedIds(set){
+  try{localStorage.setItem(DELETED_IDS_KEY,JSON.stringify([...set]))}catch(e){}
+}
+function queueUpserts(ids){
+  const q=readSyncQueue(), del=readDeletedIds();
+  for(const id of ids||[]){
+    const sid=String(id);
+    if(!sid)continue;
+    if(!q.upsert.includes(sid))q.upsert.push(sid);
+    q.remove=q.remove.filter(x=>x!==sid);
+    del.delete(sid);
+  }
+  writeSyncQueue(q);writeDeletedIds(del);
+}
+function queueRemovals(ids){
+  const q=readSyncQueue(), del=readDeletedIds();
+  for(const id of ids||[]){
+    const sid=String(id);
+    if(!sid)continue;
+    if(!q.remove.includes(sid))q.remove.push(sid);
+    q.upsert=q.upsert.filter(x=>x!==sid);
+  }
+  writeSyncQueue(q);writeDeletedIds(del);
+}
+function dequeueUpsert(id){
+  const q=readSyncQueue();q.upsert=q.upsert.filter(x=>x!==String(id));writeSyncQueue(q);
+}
+function dequeueRemoval(id){
+  const q=readSyncQueue();q.remove=q.remove.filter(x=>x!==String(id));writeSyncQueue(q);
+}
+function markDeleted(id){
+  const del=readDeletedIds();del.add(String(id));writeDeletedIds(del);
+}
+function clearDeleted(id){
+  const del=readDeletedIds();del.delete(String(id));writeDeletedIds(del);
+}
+function pendingSyncCount(){
+  const q=readSyncQueue();return q.upsert.length+q.remove.length;
+}
+
 async function remoteLoadProducts(){
   const rows=await sbFetch('/products?select=*&order=created_at.asc');
   return Array.isArray(rows)?rows.map(productFromRemote):[];
@@ -434,32 +499,153 @@ async function remoteLoadProducts(){
 async function remoteUpsertProducts(list){
   if(!authToken())throw new Error('LOGIN_REQUIRED');
   if(!list.length)return true;
-  await sbFetch('/products?on_conflict=id',{method:'POST',headers:sbHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(list.map(productToRemote))});
+  await sbFetch('/products?on_conflict=id',{
+    method:'POST',
+    headers:sbHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),
+    body:JSON.stringify(list.map(productToRemote))
+  });
   return true;
 }
-async function remoteDeleteProduct(id){if(!authToken())throw new Error('LOGIN_REQUIRED');await sbFetch('/products?id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})})}
+async function remoteDeleteProduct(id){
+  if(!authToken())throw new Error('LOGIN_REQUIRED');
+  await sbFetch('/products?id=eq.'+encodeURIComponent(String(id)),{
+    method:'DELETE',
+    headers:sbHeaders({'Prefer':'return=minimal'})
+  });
+}
 async function remoteLoadWhatsApp(){
-  try{const rows=await sbFetch('/catalog_settings?select=*&limit=1');const row=Array.isArray(rows)&&rows[0];return row?.whatsapp||''}catch(e){return ''}
+  try{
+    const rows=await sbFetch('/catalog_settings?select=*&limit=1');
+    const row=Array.isArray(rows)&&rows[0];
+    return row?.whatsapp||'';
+  }catch(e){return ''}
 }
 async function remoteSaveWhatsApp(wa){
   if(!authToken())throw new Error('LOGIN_REQUIRED');
-  await sbFetch('/catalog_settings?on_conflict=id',{method:'POST',headers:sbHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify({id:1,whatsapp:wa})});
+  await sbFetch('/catalog_settings?on_conflict=id',{
+    method:'POST',
+    headers:sbHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),
+    body:JSON.stringify({id:1,whatsapp:wa})
+  });
 }
+
+async function flushSyncQueue(){
+  const q=readSyncQueue();
+  if(!q.upsert.length&&!q.remove.length)return {synced:true,pending:0};
+
+  const ready=await ensureAdminSession();
+  if(!ready)return {synced:false,pending:pendingSyncCount(),reason:'LOGIN_REQUIRED'};
+
+  // Exclusões primeiro: evita que um produto recém-removido volte durante a mesclagem.
+  for(const id of [...q.remove]){
+    await remoteDeleteProduct(id);
+    dequeueRemoval(id);
+    markDeleted(id);
+  }
+
+  // Envia somente os produtos realmente pendentes, em vez de reenviar todo o catálogo.
+  for(const id of [...readSyncQueue().upsert]){
+    const p=products.find(x=>String(x.id)===String(id));
+    if(!p){
+      dequeueUpsert(id);
+      continue;
+    }
+    await remoteUpsertProducts([p]);
+    dequeueUpsert(id);
+    clearDeleted(id);
+  }
+
+  const left=pendingSyncCount();
+  return {synced:left===0,pending:left};
+}
+
+function mergeLocalAndRemote(remote){
+  const localMap=new Map(products.map(p=>[String(p.id),p]));
+  const remoteMap=new Map(remote.map(p=>[String(p.id),p]));
+  const q=readSyncQueue();
+  const pendingUpsert=new Set(q.upsert.map(String));
+  const pendingRemove=new Set(q.remove.map(String));
+  const deleted=readDeletedIds();
+  const merged=[];
+  const used=new Set();
+
+  // A nuvem é a fonte principal para itens já sincronizados.
+  for(const rp of remote){
+    const id=String(rp.id);
+    if(deleted.has(id)||pendingRemove.has(id))continue;
+    if(pendingUpsert.has(id)&&localMap.has(id)){
+      merged.push(localMap.get(id));
+    }else{
+      merged.push(rp);
+    }
+    used.add(id);
+  }
+
+  // Produtos locais que ainda não estão na nuvem nunca são descartados.
+  for(const lp of products){
+    const id=String(lp.id);
+    if(used.has(id)||deleted.has(id)||pendingRemove.has(id))continue;
+    merged.push(lp);
+    used.add(id);
+  }
+
+  return merged;
+}
+
 async function syncWithSupabase(){
   try{
-    // Garante que um token expirado seja renovado antes de consultar a nuvem.
-    await ensureAdminSession();
-    const remote=await remoteLoadProducts();
-    if(remote.length){products=remote;await idbPutProducts(products);try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){};render();}
-    else if(products.length && authToken()){await remoteUpsertProducts(products)}
+    // Primeiro tenta renovar a sessão do administrador, quando houver uma.
+    const adminReady=await ensureAdminSession();
+
+    // A leitura pode ser pública conforme o RLS, então clientes também conseguem carregar o catálogo.
+    let remote=await remoteLoadProducts();
+
+    // Se houver uma gravação pendente, ela é enviada antes de substituir qualquer dado local.
+    if(adminReady){
+      const remoteIds=new Set(remote.map(p=>String(p.id)));
+      const localUnsynced=products
+        .filter(p=>!remoteIds.has(String(p.id)) && !readDeletedIds().has(String(p.id)))
+        .map(p=>String(p.id));
+      if(localUnsynced.length)queueUpserts(localUnsynced);
+
+      await flushSyncQueue();
+      remote=await remoteLoadProducts();
+    }
+
+    // Mescla sem apagar produtos locais que ainda não chegaram à nuvem.
+    products=mergeLocalAndRemote(remote);
+    await idbPutProducts(products);
+    try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){}
+
+    // Se ainda houver itens pendentes, mantém a informação visível e tenta novamente numa próxima ação.
+    const pending=pendingSyncCount();
+    supabaseOnline=pending===0;
+    const st=document.getElementById('cloudStatus');
+    if(st){
+      st.textContent=pending===0
+        ? '☁️ Catálogo sincronizado com a nuvem.'
+        : '⚠️ Há '+pending+' alteração(ões) pendente(s) de sincronização. O catálogo continua funcionando neste aparelho.';
+    }
+
     const remoteWa=await remoteLoadWhatsApp();
-    if(remoteWa){localStorage.setItem(WKEY,remoteWa);loadWA()}
-    else{const localWa=localStorage.getItem(WKEY)||'';if(localWa && authToken())try{await remoteSaveWhatsApp(localWa)}catch(e){}}
-    supabaseOnline=true;
-    const st=document.getElementById('cloudStatus');if(st)st.textContent='☁️ Catálogo sincronizado com a nuvem.';
+    if(remoteWa){
+      localStorage.setItem(WKEY,remoteWa);
+      loadWA();
+    }else{
+      const localWa=localStorage.getItem(WKEY)||'';
+      if(localWa && adminReady){
+        try{await remoteSaveWhatsApp(localWa)}catch(e){}
+      }
+    }
+
+    return {synced:pending===0,pending};
   }catch(e){
-    console.warn('Supabase indisponível ou RLS bloqueando a operação:',e);
-    const st=document.getElementById('cloudStatus');if(st)st.textContent='⚠️ Nuvem ainda não sincronizada. O catálogo continua funcionando neste aparelho.';
+    // Importante: em caso de erro de nuvem, NUNCA substitui nem apaga os produtos locais.
+    console.warn('Supabase indisponível ou operação bloqueada:',e);
+    supabaseOnline=false;
+    const st=document.getElementById('cloudStatus');
+    if(st)st.textContent='⚠️ Nuvem não sincronizada no momento. Os dados deste aparelho foram preservados e serão tentados novamente.';
+    return {synced:false,pending:pendingSyncCount(),error:e};
   }
 }
 
@@ -485,6 +671,7 @@ function loadProductsCompat(){
       for(const p of arr){
         if(!p || typeof p!=='object') continue;
         const id=String(p.id||'');
+        if(id && readDeletedIds().has(id)) continue;
         const sig=id || JSON.stringify([p.name||'',p.price||'',p.photo||'',p.category||'']);
         if(seen.has(sig)) continue; seen.add(sig);
         // Mantém compatibilidade com produtos antigos sem novos campos.
@@ -506,15 +693,27 @@ const IDB_NAME='MeuCatalogoDigitalDB', IDB_STORE='dados', IDB_KEY='products';
 function openCatalogDB(){return new Promise((resolve,reject)=>{try{if(!('indexedDB' in window))return reject(new Error('IndexedDB indisponível'));const r=indexedDB.open(IDB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(IDB_STORE))r.result.createObjectStore(IDB_STORE)};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('Falha no banco'))}catch(e){reject(e)}})}
 async function idbGetProducts(){const db=await openCatalogDB();return new Promise((resolve,reject)=>{const tx=db.transaction(IDB_STORE,'readonly'),req=tx.objectStore(IDB_STORE).get(IDB_KEY);req.onsuccess=()=>{db.close();resolve(Array.isArray(req.result)?req.result:null)};req.onerror=()=>{db.close();reject(req.error)}})}
 async function idbPutProducts(data){const db=await openCatalogDB();return new Promise((resolve,reject)=>{const tx=db.transaction(IDB_STORE,'readwrite');tx.objectStore(IDB_STORE).put(data,IDB_KEY);tx.oncomplete=()=>{db.close();resolve(true)};tx.onerror=()=>{db.close();reject(tx.error||new Error('Falha ao salvar'))}})}
-async function saveDB(){
+async function saveDB(syncIds=[], deleteIds=[]){
   let localOk=true;
   try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){localOk=false;console.warn('LocalStorage cheio; usando banco local IndexedDB.',e)}
   try{await idbPutProducts(products)}catch(e){
     if(!localOk) throw new Error('Não foi possível salvar neste aparelho. O armazenamento do navegador está indisponível ou cheio. Faça um backup e tente novamente.');
   }
-  // Depois do salvamento local, sincroniza a lista com a nuvem quando possível.
-  if(authToken()){try{await remoteUpsertProducts(products);supabaseOnline=true}catch(e){console.warn('Falha ao sincronizar produtos com Supabase:',e)}}
-  return true;
+
+  // Registra a alteração antes de tentar a nuvem. Se a conexão falhar, ela não será perdida.
+  if(syncIds.length)queueUpserts(syncIds);
+  if(deleteIds.length)queueRemovals(deleteIds);
+
+  const result=await flushSyncQueue();
+  supabaseOnline=result.synced;
+
+  const st=document.getElementById('cloudStatus');
+  if(st){
+    st.textContent=result.synced
+      ? '☁️ Catálogo sincronizado com a nuvem.'
+      : '⚠️ Salvo neste aparelho; a sincronização com a nuvem ficou pendente.';
+  }
+  return result;
 }
 async function syncStorageOnStartup(){
   try{
@@ -834,10 +1033,14 @@ async function saveProduct(e){
     if(!p.price){alert('Digite o preço do produto.');return}
     const i=products.findIndex(x=>x.id===id);
     if(i<0)products.unshift(p);else products[i]=p;
-    await saveDB();
+    const syncResult=await saveDB([id],[]);
     clearForm();
     render();
-    alert('✅ Produto salvo com sucesso!');
+    if(syncResult.synced){
+      alert('✅ Produto salvo e sincronizado com a nuvem!');
+    }else{
+      alert('✅ Produto salvo neste aparelho.\n\n⚠️ A sincronização com a nuvem ficou pendente e será tentada novamente automaticamente.');
+    }
     openAdmin();
   }catch(err){
     console.error(err);
@@ -860,7 +1063,18 @@ function edit(id){
 
 async function del(id){
   if(customerModeActive)return;
-  if(confirm('Excluir este produto?')){try{products=products.filter(x=>x.id!==id);await saveDB();try{await remoteDeleteProduct(id)}catch(e){}render()}catch(e){alert('Não foi possível excluir e salvar a alteração.');}}
+  if(confirm('Excluir este produto?')){
+    try{
+      products=products.filter(x=>String(x.id)!==String(id));
+      const result=await saveDB([], [id]);
+      render();
+      if(!result.synced){
+        alert('✅ Produto excluído deste aparelho.\n\n⚠️ A exclusão ficará pendente na nuvem e será tentada novamente automaticamente.');
+      }
+    }catch(e){
+      alert('Não foi possível excluir e salvar a alteração neste aparelho.');
+    }
+  }
 }
 function categories(){return [...new Set(products.map(p=>p.category).filter(Boolean))].sort()}
 function renderChips(){
@@ -1127,8 +1341,12 @@ async function saveStoreWhatsApp(){
   let v=document.getElementById('storeWhatsApp').value.replace(/\D/g,'');
   if(!v){alert('Digite o número do WhatsApp.');return}
   localStorage.setItem(WKEY,v);
-  try{await remoteSaveWhatsApp(v);document.getElementById('waStatus').textContent='✅ WhatsApp salvo e sincronizado com a nuvem.'}
-  catch(e){document.getElementById('waStatus').textContent='⚠️ Salvo neste aparelho, mas não foi possível sincronizar com a nuvem.'}
+  try{
+    await remoteSaveWhatsApp(v);
+    document.getElementById('waStatus').textContent='✅ WhatsApp salvo e sincronizado com a nuvem.';
+  }catch(e){
+    document.getElementById('waStatus').textContent='⚠️ WhatsApp salvo neste aparelho; a sincronização com a nuvem ficou pendente.';
+  }
 }
 
 function clearStoreWhatsApp(){localStorage.removeItem(WKEY);loadWA()}
@@ -1212,7 +1430,15 @@ function backup(){
 function restore(e){
   let f=e.target.files[0];if(!f)return;
   let r=new FileReader();
-  r.onload=()=>{try{let x=JSON.parse(r.result);if(!Array.isArray(x))throw 0;products=x;saveDB().then(()=>{render();alert('Catálogo restaurado com sucesso!')}).catch(()=>alert('Não foi possível salvar o backup restaurado neste aparelho.'))}catch(err){alert('Backup inválido.')}}
+  r.onload=async()=>{try{
+    let x=JSON.parse(r.result);if(!Array.isArray(x))throw 0;
+    products=x;
+    const syncResult=await saveDB(products.map(p=>String(p.id)),[]);
+    render();
+    alert(syncResult.synced
+      ? 'Catálogo restaurado com sucesso e sincronizado com a nuvem!'
+      : 'Catálogo restaurado neste aparelho. A sincronização com a nuvem ficou pendente e será tentada novamente.');
+  }catch(err){alert('Backup inválido ou não foi possível salvar o backup neste aparelho.')}}
   r.readAsText(f);e.target.value='';
 }
 function initDepartments(){
@@ -1231,9 +1457,14 @@ render();
 setView(currentView);
 loadWA();
 applyCustomerMode();
-syncStorageOnStartup();
-// Busca os produtos compartilhados; gravações na nuvem exigem sessão de administrador.
-syncWithSupabase();
+
+(async function bootstrapCatalog(){
+  // Primeiro carrega o armazenamento local; depois sincroniza com a nuvem.
+  // A ordem evita corrida entre IndexedDB/localStorage e Supabase.
+  await syncStorageOnStartup();
+  render();
+  await syncWithSupabase();
+})();
 
 // O listener usa CAPTURE para interceptar o toque antes do clique do card.
 // Assim, tocar em uma cor nunca abre o produto errado e sempre troca para o cadastro correspondente.
