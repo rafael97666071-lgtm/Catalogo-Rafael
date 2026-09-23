@@ -312,9 +312,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
   <form class="form" onsubmit="saveProduct(event)">
     <input type="hidden" id="editId">
     <div><label>Nome do produto<input id="name" required placeholder="Ex.: Guarda-Roupa Casal"></label></div>
-    <div><label>Categoria<select id="category" onchange="fillSubcategorySelect()"></select></label></div>
-    <div><label>Subcategoria<select id="subcategory" onchange="updateSubSubcategorySelect()"><option value="">Sem subcategoria</option></select></label></div>
-    <div><label>Subcategoria final<select id="subsubcategory"><option value="">Sem nível final</option></select></label></div>
+    <div><label>Categoria<select id="category" onchange="changeFormCategory()"></select></label></div>
+    <div><label>Subcategoria<select id="subcategory" onchange="changeFormSubcategory()"><option value="">Sem subcategoria</option></select></label></div>
+    <div><label>Subcategoria final<select id="subsubcategory" onchange="rememberFormHierarchy()"><option value="">Sem nível final</option></select></label></div>
     <div><label>Preço atual<input id="price" required inputmode="decimal" placeholder="799,00"></label></div>
     <div><label>Preço anterior<input id="oldPrice" inputmode="decimal" placeholder="999,00"></label></div>
     <div><label>Cor do produto<input id="color" placeholder="Ex.: Branco, Marrom, Grafite"></label></div>
@@ -700,6 +700,55 @@ const TAXONOMY={
 
 let activeSub='',activeSubSub='';
 
+// Preferências do formulário: cada categoria guarda sua última
+// subcategoria e subcategoria final escolhidas neste aparelho.
+const FORM_HIERARCHY_PREFS_KEY='catalogo_form_hierarchy_prefs_v1';
+let lastFormCategory='';
+
+function readFormHierarchyPrefs(){
+  try{return JSON.parse(localStorage.getItem(FORM_HIERARCHY_PREFS_KEY)||'{}')||{}}catch(e){return {}}
+}
+function writeFormHierarchyPrefs(prefs){
+  try{localStorage.setItem(FORM_HIERARCHY_PREFS_KEY,JSON.stringify(prefs))}catch(e){}
+}
+function rememberFormHierarchy(){
+  const cat=val('category');
+  if(!cat)return;
+  const prefs=readFormHierarchyPrefs();
+  prefs[cat]={subcategory:val('subcategory')||'',subsubcategory:val('subsubcategory')||''};
+  writeFormHierarchyPrefs(prefs);
+  lastFormCategory=cat;
+}
+function restoreLastFormCategory(){
+  const catEl=document.getElementById('category');
+  if(!catEl)return;
+  const prefs=readFormHierarchyPrefs();
+  const preferred=localStorage.getItem('catalogo_last_form_category_v1')||'';
+  if(preferred && [...catEl.options].some(o=>o.value===preferred)){
+    catEl.value=preferred;
+  }
+  lastFormCategory=catEl.value||'';
+  fillSubcategorySelect();
+}
+function changeFormCategory(){
+  // Guarda a preferência da categoria anterior antes de trocar de categoria.
+  if(lastFormCategory && lastFormCategory!==val('category')){
+    const prefs=readFormHierarchyPrefs();
+    const oldSub=document.getElementById('subcategory')?.value||'';
+    const oldSubSub=document.getElementById('subsubcategory')?.value||'';
+    prefs[lastFormCategory]={subcategory:oldSub,subsubcategory:oldSubSub};
+    writeFormHierarchyPrefs(prefs);
+  }
+  const cat=val('category');
+  lastFormCategory=cat;
+  try{localStorage.setItem('catalogo_last_form_category_v1',cat)}catch(e){}
+  fillSubcategorySelect();
+}
+function changeFormSubcategory(){
+  updateSubSubcategorySelect();
+  rememberFormHierarchy();
+}
+
 function subcategoriesFor(cat){return Object.keys(TAXONOMY[cat]||{});}
 function subSubcategoriesFor(cat,sub){return (TAXONOMY[cat]&&TAXONOMY[cat][sub])||[];}
 
@@ -707,9 +756,12 @@ function fillSubcategorySelect(keep=''){
   const cat=val('category'), sel=document.getElementById('subcategory');
   if(!sel)return;
   const subs=subcategoriesFor(cat);
+  const prefs=readFormHierarchyPrefs();
+  const pref=prefs[cat]||{};
+  const desiredSub=keep || pref.subcategory || '';
   sel.innerHTML='<option value="">Sem subcategoria</option>'+subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-  if(subs.includes(keep))sel.value=keep;
-  updateSubSubcategorySelect();
+  if(subs.includes(desiredSub))sel.value=desiredSub;
+  updateSubSubcategorySelect(keep ? '' : (pref.subsubcategory||''));
 }
 function updateSubSubcategorySelect(keep=''){
   const cat=val('category'),sub=val('subcategory'),sel=document.getElementById('subsubcategory');
@@ -778,8 +830,8 @@ function clearForm(){
   document.getElementById('formTitle').textContent='Cadastrar produto';setv('color','');populateVariantBase('');
   document.getElementById('previewGallery').innerHTML='';
   document.getElementById('photo').value='';
-  fillSubcategorySelect();
-  document.getElementById('subsubcategory').value='';
+  // Mantém a última preferência de categoria/subcategoria deste aparelho.
+  restoreLastFormCategory();
 }
 function renderPhotoEditor(){
   const box=document.getElementById('previewGallery');
@@ -1375,7 +1427,7 @@ function restore(e){
 function initDepartments(){
   document.getElementById('deptGrid').innerHTML=DEPTS.map((d,i)=>`<button onclick="chooseDepartment(${i})">${esc(d)}</button>`).join('');
   document.getElementById('category').innerHTML=DEPTS.map(d=>`<option>${esc(d)}</option>`).join('');
-  fillSubcategorySelect();
+  restoreLastFormCategory();
 }
 initDepartments();
 loadAuthSession();
