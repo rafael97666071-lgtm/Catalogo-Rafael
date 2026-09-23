@@ -39,10 +39,17 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .preview{width:130px;height:130px;object-fit:cover;border-radius:10px;margin-top:8px;display:none}
 
 .photoEditor{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-.photoEditItem{position:relative;width:90px;height:90px;border-radius:10px;overflow:hidden;border:3px solid transparent;background:#f1f2f4;cursor:pointer;box-shadow:0 1px 4px #00000018}
-.photoEditItem img{width:100%;height:100%;object-fit:cover;display:block}
+.photoEditItem{position:relative;width:90px;height:90px;border-radius:10px;overflow:hidden;border:3px solid transparent;background:#f1f2f4;cursor:grab;box-shadow:0 1px 4px #00000018;touch-action:none;user-select:none;-webkit-user-select:none;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease,opacity .16s ease}
+.photoEditItem:active{cursor:grabbing}
+.photoEditItem img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
 .photoEditItem.selected{border-color:var(--red);box-shadow:0 0 0 2px #ed173d33}
-.photoEditTrash{position:absolute;right:4px;top:4px;width:30px;height:30px;border:0;border-radius:50%;background:var(--red);color:#fff;font-size:16px;font-weight:900;display:none;align-items:center;justify-content:center;padding:0;box-shadow:0 2px 6px #0005}
+.photoEditItem.dragging{opacity:.12;border:3px dashed var(--blue);box-shadow:0 0 0 2px #073dcc22;background:#eef3ff;transform:none}
+.photoEditItem.dragging img,.photoEditItem.dragging .photoEditTrash{visibility:hidden}
+.photoEditItem.drag-over{border-color:var(--blue);box-shadow:0 0 0 3px #1554d133}
+.photoDragPlaceholder{width:90px;height:90px;flex:0 0 90px;border:3px dashed var(--blue);border-radius:10px;background:#eef3ff;box-sizing:border-box;box-shadow:inset 0 0 0 2px #073dcc18}
+.photoDragGhost{position:fixed;left:0;top:0;width:90px;height:90px;border-radius:10px;overflow:hidden;pointer-events:none;z-index:99999;box-shadow:0 14px 30px #0006;transform:translate3d(-50%,-50%,0) scale(1.06) rotate(1deg);transform-origin:center center;will-change:transform;opacity:.98}
+.photoDragGhost img{width:100%;height:100%;object-fit:cover;display:block}
+.photoEditTrash{position:absolute;right:4px;top:4px;width:30px;height:30px;border:0;border-radius:50%;background:var(--red);color:#fff;font-size:16px;font-weight:900;display:none;align-items:center;justify-content:center;padding:0;box-shadow:0 2px 6px #0005;z-index:10;touch-action:manipulation}
 .photoEditItem.selected .photoEditTrash{display:flex}
 .photoEditorHint{margin-top:7px;font-size:12px;color:var(--muted)}
 .gallery{display:flex;gap:8px;overflow:auto;padding:10px 0}.gallery img{width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:2px solid transparent}.gallery img.active{border-color:var(--blue)}
@@ -335,7 +342,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
         <input id="photo" type="file" accept="image/*" multiple onclick="this.value=''" onchange="previewMany(event)">
       </label>
       <div id="previewGallery" class="photoEditor"></div>
-      <div class="photoEditorHint">Toque em uma foto para selecioná-la. A lixeira vermelha aparecerá; toque nela para excluir somente essa foto.</div>
+      <div class="photoEditorHint">Toque em uma foto para selecioná-la. A lixeira vermelha aparecerá; toque nela para excluir somente essa foto. Toque e segure para arrastar e mudar a ordem das fotos.</div>
       <div class="small" style="margin-top:5px">A primeira foto será a principal. As demais ficam na galeria do anúncio.</div>
     </div>
     <div class="full">
@@ -823,29 +830,236 @@ async function openAdmin(){
 }
 function closeAdmin(){document.getElementById('admin').classList.remove('show')}
 let formPhotos=[];
-function clearForm(){
-  const form=document.querySelector('#admin form'); if(form)form.reset();
-  setv('editId','');
-  formPhotos=[];
-  document.getElementById('formTitle').textContent='Cadastrar produto';setv('color','');populateVariantBase('');
-  document.getElementById('previewGallery').innerHTML='';
-  document.getElementById('photo').value='';
-  // Mantém a última preferência de categoria/subcategoria deste aparelho.
-  restoreLastFormCategory();
+let formPhotoKeys=[];
+let photoKeySeq=0;
+let activePhotoDrag=null;
+let photoDragPressTimer=null;
+let photoDragMoveRaf=0;
+let pendingPhotoPress=null;
+
+function newPhotoKey(){
+  photoKeySeq+=1;
+  return 'photo_'+Date.now().toString(36)+'_'+photoKeySeq.toString(36)+'_'+Math.random().toString(36).slice(2,8);
+}
+function ensurePhotoKeys(){
+  while(formPhotoKeys.length<formPhotos.length)formPhotoKeys.push(newPhotoKey());
+  if(formPhotoKeys.length>formPhotos.length)formPhotoKeys=formPhotoKeys.slice(0,formPhotos.length);
+}
+function photoIndexByKey(key){return formPhotoKeys.indexOf(key)}
+function syncFormPhotosFromDom(){
+  const box=document.getElementById('previewGallery');
+  if(!box)return;
+  const keys=[...box.querySelectorAll('.photoEditItem')].map(x=>x.dataset.photoKey).filter(Boolean);
+  if(keys.length!==formPhotos.length)return;
+  const nextPhotos=[],nextKeys=[];
+  keys.forEach(key=>{
+    const i=photoIndexByKey(key);
+    if(i>=0){nextPhotos.push(formPhotos[i]);nextKeys.push(formPhotoKeys[i])}
+  });
+  if(nextPhotos.length===formPhotos.length){formPhotos=nextPhotos;formPhotoKeys=nextKeys}
+}
+function cancelPhotoPress(){
+  if(photoDragPressTimer){clearTimeout(photoDragPressTimer);photoDragPressTimer=null}
+  pendingPhotoPress=null;
+}
+function clearPhotoDragState(){
+  cancelPhotoPress();
+  if(photoDragMoveRaf){cancelAnimationFrame(photoDragMoveRaf);photoDragMoveRaf=0}
+  const box=document.getElementById('previewGallery');
+  if(box)box.querySelectorAll('.dragging,.drag-over').forEach(x=>x.classList.remove('dragging','drag-over'));
+  const drag=activePhotoDrag;
+  if(drag?.placeholder?.parentNode)drag.placeholder.parentNode.removeChild(drag.placeholder);
+  if(drag?.ghost?.parentNode)drag.ghost.parentNode.removeChild(drag.ghost);
+  activePhotoDrag=null;
+}
+function nearestPhotoItem(x,y,exclude){
+  const box=document.getElementById('previewGallery');
+  if(!box)return null;
+  const items=[...box.querySelectorAll('.photoEditItem')].filter(el=>el!==exclude);
+  let best=null,bestScore=Infinity;
+  for(const el of items){
+    const r=el.getBoundingClientRect();
+    const cx=r.left+r.width/2,cy=r.top+r.height/2;
+    const dx=cx-x,dy=cy-y;
+    const score=dx*dx+dy*dy;
+    if(score<bestScore){bestScore=score;best=el}
+  }
+  return best;
+}
+function movePhotoPlaceholder(x,y){
+  const drag=activePhotoDrag;
+  const box=document.getElementById('previewGallery');
+  if(!drag||!box||!drag.placeholder)return;
+  const items=[...box.querySelectorAll('.photoEditItem')].filter(el=>el!==drag.item);
+  if(!items.length)return;
+
+  let target=null;
+  for(const el of items){
+    const r=el.getBoundingClientRect();
+    if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom){target=el;break}
+  }
+  if(!target)target=nearestPhotoItem(x,y,drag.item);
+  if(!target)return;
+
+  const r=target.getBoundingClientRect();
+  const horizontal=Math.abs(x-(r.left+r.width/2))>=Math.abs(y-(r.top+r.height/2));
+  const before=horizontal ? x<r.left+r.width/2 : y<r.top+r.height/2;
+  const ref=before?target:target.nextSibling;
+  if(ref!==drag.placeholder){
+    box.insertBefore(drag.placeholder,ref||null);
+  }
+}
+function autoScrollWhileDragging(x,y){
+  const margin=80,speed=12;
+  let dy=0;
+  if(y<margin)dy=-speed;
+  else if(y>window.innerHeight-margin)dy=speed;
+  if(dy){window.scrollBy(0,dy);return true}
+  return false;
+}
+function updatePhotoDragPosition(x,y){
+  const drag=activePhotoDrag;
+  if(!drag)return;
+  drag.lastX=x;drag.lastY=y;
+  if(drag.ghost)drag.ghost.style.transform=`translate3d(${x}px,${y}px,0) translate(-50%,-50%) scale(1.06) rotate(1deg)`;
+  if(photoDragMoveRaf)return;
+  photoDragMoveRaf=requestAnimationFrame(()=>{
+    photoDragMoveRaf=0;
+    const d=activePhotoDrag;if(!d)return;
+    movePhotoPlaceholder(d.lastX,d.lastY);
+    if(autoScrollWhileDragging(d.lastX,d.lastY)){
+      // A rolagem não precisa reconstruir a galeria; apenas atualiza a posição visual.
+      requestAnimationFrame(()=>{if(activePhotoDrag)movePhotoPlaceholder(activePhotoDrag.lastX,activePhotoDrag.lastY)});
+    }
+  });
+}
+function startTouchPhotoDrag(item,key,ev){
+  if(activePhotoDrag)return;
+  const img=item.querySelector('img');
+  if(!img)return;
+  const placeholder=document.createElement('div');
+  placeholder.className='photoDragPlaceholder';
+  placeholder.setAttribute('aria-hidden','true');
+  item.parentNode.insertBefore(placeholder,item);
+
+  const ghost=document.createElement('div');
+  ghost.className='photoDragGhost';
+  const ghostImg=document.createElement('img');
+  ghostImg.src=img.currentSrc||img.src;
+  ghostImg.alt='';
+  ghost.appendChild(ghostImg);
+  document.body.appendChild(ghost);
+
+  activePhotoDrag={key,item,mode:'touch',pointerId:ev.pointerId,ghost,placeholder,startX:ev.clientX,startY:ev.clientY,lastX:ev.clientX,lastY:ev.clientY};
+  item.classList.add('dragging');
+  item.dataset.wasDragged='1';
+  try{item.setPointerCapture?.(ev.pointerId)}catch(e){}
+  updatePhotoDragPosition(ev.clientX,ev.clientY);
+}
+function commitPhotoDrag(){
+  const drag=activePhotoDrag;
+  if(!drag||!drag.item||!drag.placeholder)return;
+  const box=document.getElementById('previewGallery');
+  if(!box)return;
+  // O marcador azul representa a posição final. No momento de soltar,
+  // colocamos a foto REAL exatamente onde o marcador está antes de
+  // sincronizar o array formPhotos. Isso evita a foto voltar para o índice antigo.
+  if(drag.placeholder.parentNode===box){
+    box.insertBefore(drag.item,drag.placeholder);
+  }
+  syncFormPhotosFromDom();
+}
+function finishTouchPhotoDrag(){
+  const drag=activePhotoDrag;
+  if(!drag||drag.mode!=='touch')return;
+  commitPhotoDrag();
+  try{drag.item.releasePointerCapture?.(drag.pointerId)}catch(e){}
+  clearPhotoDragState();
 }
 function renderPhotoEditor(){
   const box=document.getElementById('previewGallery');
   if(!box)return;
+  clearPhotoDragState();
+  ensurePhotoKeys();
   box.innerHTML='';
   formPhotos.forEach((src,i)=>{
+    const key=formPhotoKeys[i];
     const item=document.createElement('div');
     item.className='photoEditItem';
-    item.title='Toque para selecionar esta foto';
+    item.dataset.photoKey=key;
+    item.title='Toque para selecionar. Toque e segure para mover.';
+    item.draggable=true;
+
     item.onclick=()=>{
+      if(item.dataset.wasDragged==='1'){item.dataset.wasDragged='0';return}
       item.classList.toggle('selected');
-      const trash=item.querySelector('.photoEditTrash');
-      if(trash)trash.setAttribute('aria-label',`Excluir foto ${i+1}`);
     };
+
+    item.addEventListener('dragstart',ev=>{
+      const placeholder=document.createElement('div');
+      placeholder.className='photoDragPlaceholder';
+      placeholder.setAttribute('aria-hidden','true');
+      item.parentNode.insertBefore(placeholder,item);
+      activePhotoDrag={key,item,mode:'native',placeholder};
+      item.classList.add('dragging');
+      ev.dataTransfer.effectAllowed='move';
+      ev.dataTransfer.setData('text/plain',key);
+    });
+    item.addEventListener('dragover',ev=>{
+      if(!activePhotoDrag||activePhotoDrag.mode!=='native')return;
+      ev.preventDefault();
+      movePhotoPlaceholder(ev.clientX,ev.clientY);
+    });
+    item.addEventListener('drop',ev=>{
+      if(!activePhotoDrag||activePhotoDrag.mode!=='native')return;
+      ev.preventDefault();
+      movePhotoPlaceholder(ev.clientX,ev.clientY);
+    });
+    item.addEventListener('dragend',()=>{
+      commitPhotoDrag();
+      item.dataset.wasDragged='1';
+      clearPhotoDragState();
+    });
+
+    let pointerId=null;
+    item.addEventListener('pointerdown',ev=>{
+      if(ev.pointerType==='mouse')return;
+      if(ev.target.closest('.photoEditTrash'))return;
+      cancelPhotoPress();
+      pointerId=ev.pointerId;
+      pendingPhotoPress={item,key,pointerId,startX:ev.clientX,startY:ev.clientY};
+      photoDragPressTimer=setTimeout(()=>{
+        photoDragPressTimer=null;
+        const p=pendingPhotoPress;
+        if(!p||p.item!==item||p.pointerId!==pointerId||!item.isConnected)return;
+        startTouchPhotoDrag(item,key,{pointerId,clientX:p.startX,clientY:p.startY});
+      },300);
+    });
+    item.addEventListener('pointermove',ev=>{
+      if(activePhotoDrag?.mode==='touch'&&activePhotoDrag.key===key){
+        ev.preventDefault();
+        updatePhotoDragPosition(ev.clientX,ev.clientY);
+        return;
+      }
+      const p=pendingPhotoPress;
+      if(p&&p.item===item&&p.pointerId===ev.pointerId&&!activePhotoDrag){
+        const dx=ev.clientX-p.startX,dy=ev.clientY-p.startY;
+        // Pequenos tremores do dedo não cancelam o toque longo; movimentos maiores significam rolagem.
+        if(Math.hypot(dx,dy)>18)cancelPhotoPress();
+      }
+    });
+    item.addEventListener('pointerup',ev=>{
+      if(activePhotoDrag?.mode==='touch'&&activePhotoDrag.key===key){
+        finishTouchPhotoDrag();
+        return;
+      }
+      if(pendingPhotoPress?.item===item&&pendingPhotoPress.pointerId===ev.pointerId)cancelPhotoPress();
+    });
+    item.addEventListener('pointercancel',()=>{
+      if(activePhotoDrag?.mode==='touch'&&activePhotoDrag.key===key)finishTouchPhotoDrag();
+      else cancelPhotoPress();
+    });
+
     const img=document.createElement('img');
     img.src=src;
     img.alt=`Foto ${i+1}`;
@@ -857,13 +1071,28 @@ function renderPhotoEditor(){
     trash.onclick=(ev)=>{
       ev.preventDefault();
       ev.stopPropagation();
-      formPhotos.splice(i,1);
+      cancelPhotoPress();
+      const idx=photoIndexByKey(key);
+      if(idx>=0){formPhotos.splice(idx,1);formPhotoKeys.splice(idx,1);}
+      clearPhotoDragState();
       renderPhotoEditor();
     };
     item.appendChild(img);
     item.appendChild(trash);
     box.appendChild(item);
   });
+}
+
+function clearForm(){
+  const form=document.querySelector('#admin form'); if(form)form.reset();
+  setv('editId','');
+  formPhotos=[];
+  formPhotoKeys=[];
+  document.getElementById('formTitle').textContent='Cadastrar produto';setv('color','');populateVariantBase('');
+  document.getElementById('previewGallery').innerHTML='';
+  document.getElementById('photo').value='';
+  // Mantém a última preferência de categoria/subcategoria deste aparelho.
+  restoreLastFormCategory();
 }
 async function previewMany(e){
   const input=e.target;
@@ -888,6 +1117,7 @@ async function previewMany(e){
     // Nunca substitui as fotos já carregadas: apenas acrescenta as novas.
     if(added.length){
       formPhotos.push(...added);
+      added.forEach(()=>formPhotoKeys.push(newPhotoKey()));
       renderPhotoEditor();
     }
 
@@ -1043,6 +1273,7 @@ function edit(id){
   setv('editId',p.id);setv('name',p.name);setv('category',p.category);fillSubcategorySelect(p.subcategory||'');updateSubSubcategorySelect(p.subsubcategory||'');setv('price',p.price);setv('oldPrice',p.oldPrice);setv('color',p.color);populateVariantBase(p.variantGroup ? (products.find(x=>x.id!==p.id && variantFamilyId(x)===p.variantGroup)?.id||'') : '');setv('featured',p.featured?'yes':'no');setv('description',p.description);setv('width',p.width);setv('height',p.height);setv('depth',p.depth);setv('installments',p.installments);
   let photos=p.photos||(p.photo?[p.photo]:[]);
   formPhotos=[...photos];
+  formPhotoKeys=formPhotos.map(()=>newPhotoKey());
   renderPhotoEditor();
   document.getElementById('photo').value='';
   document.getElementById('formTitle').textContent='Editar produto';
