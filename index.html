@@ -422,8 +422,8 @@ async function signInAdmin(){
     saveAuthSession(data);
     closeAdminLogin();
     openAdmin();
-    await syncWithSupabase();
-    alert('✅ Login de administrador realizado.');
+    syncWithSupabase();
+    alert('✅ Login de administrador realizado. A sincronização pendente continuará automaticamente.');
   }catch(e){console.error(e);if(st)st.textContent='❌ '+e.message}
 }
 function closeAdminLogin(){const m=document.getElementById('adminLoginModal');if(m){m.classList.remove('show');m.setAttribute('aria-hidden','true')}}
@@ -470,19 +470,116 @@ async function remoteSaveWhatsApp(wa){
     body:JSON.stringify({id:1,whatsapp:wa})
   });
 }
+const SYNC_QUEUE_KEY='catalogo_sync_queue_v2';
+const DELETED_IDS_KEY='catalogo_deleted_ids_v2';
+let syncFlushRunning=false;
+
+function readSyncQueue(){
+  try{const x=JSON.parse(localStorage.getItem(SYNC_QUEUE_KEY)||'[]');return Array.isArray(x)?[...new Set(x.map(String))]:[]}catch(e){return[]}
+}
+function writeSyncQueue(q){try{localStorage.setItem(SYNC_QUEUE_KEY,JSON.stringify([...new Set(q.map(String))]))}catch(e){console.warn('Não foi possível gravar a fila de sincronização.',e)}}
+function readDeletedIds(){
+  try{const x=JSON.parse(localStorage.getItem(DELETED_IDS_KEY)||'[]');return Array.isArray(x)?[...new Set(x.map(String))]:[]}catch(e){return[]}
+}
+function writeDeletedIds(q){try{localStorage.setItem(DELETED_IDS_KEY,JSON.stringify([...new Set(q.map(String))]))}catch(e){console.warn('Não foi possível gravar a lista de exclusões pendentes.',e)}}
+function queueUpserts(ids){
+  const q=readSyncQueue();const deleted=new Set(readDeletedIds());
+  for(const id of ids||[]){const sid=String(id);deleted.delete(sid);if(!q.includes(sid))q.push(sid)}
+  writeSyncQueue(q);writeDeletedIds([...deleted]);
+}
+function queueRemovals(ids){
+  const q=readSyncQueue().filter(id=>!(ids||[]).map(String).includes(String(id)));
+  const deleted=readDeletedIds();
+  for(const id of ids||[]){const sid=String(id);if(!deleted.includes(sid))deleted.push(sid)}
+  writeSyncQueue(q);writeDeletedIds(deleted);
+}
+function dequeueUpsert(id){writeSyncQueue(readSyncQueue().filter(x=>String(x)!==String(id)))}
+function dequeueRemoval(id){writeDeletedIds(readDeletedIds().filter(x=>String(x)!==String(id)))}
+function pendingSyncCount(){return readSyncQueue().length+readDeletedIds().length}
+
+function mergeLocalAndRemote(remote){
+  const pending=new Set(readSyncQueue());
+  const deleted=new Set(readDeletedIds());
+  const remoteMap=new Map((remote||[]).map(p=>[String(p.id),p]));
+  const localMap=new Map((products||[]).map(p=>[String(p.id),p]));
+  const merged=[];
+  // O que já está na nuvem continua preservado. Alterações locais pendentes vencem o remoto.
+  for(const rp of (remote||[])){
+    const id=String(rp.id);if(deleted.has(id))continue;
+    merged.push(pending.has(id)&&localMap.has(id)?localMap.get(id):rp);
+  }
+  // Produtos que existem só neste aparelho são preservados e enviados depois.
+  for(const lp of (products||[])){
+    const id=String(lp.id);if(deleted.has(id)||remoteMap.has(id))continue;
+    merged.push(lp);
+  }
+  return merged;
+}
+
+async function flushSyncQueue(){
+  if(syncFlushRunning)return;
+  syncFlushRunning=true;
+  try{
+    if(!(await ensureAdminSession()))return;
+    let safety=0;
+    while(pendingSyncCount()>0 && safety++<500){
+      const deleted=readDeletedIds();
+      if(deleted.length){
+        for(const id of deleted){
+          await remoteDeleteProduct(id);
+          dequeueRemoval(id);
+        }
+        continue;
+      }
+      const queue=readSyncQueue();
+      if(!queue.length)break;
+      const batch=queue.map(id=>products.find(p=>String(p.id)===String(id))).filter(Boolean);
+      if(!batch.length){writeSyncQueue([]);continue}
+      await remoteUpsertProducts(batch);
+      batch.forEach(p=>dequeueUpsert(p.id));
+    }
+    if(pendingSyncCount()===0){
+      supabaseOnline=true;
+      const st=document.getElementById('cloudStatus');if(st)st.textContent='☁️ Catálogo sincronizado com a nuvem.';
+    }else{
+      const st=document.getElementById('cloudStatus');if(st)st.textContent='⏳ Sincronização pendente — será tentada novamente automaticamente.';
+    }
+  }catch(e){
+    console.warn('Sincronização em segundo plano pendente:',e);
+    const st=document.getElementById('cloudStatus');if(st)st.textContent='⏳ Salvo neste aparelho. Sincronização com a nuvem pendente; tentaremos novamente automaticamente.';
+  }finally{
+    syncFlushRunning=false;
+  }
+}
+
 async function syncWithSupabase(){
   try{
     const remote=await remoteLoadProducts();
-    if(remote.length){products=remote;await idbPutProducts(products);try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){};render();}
-    else if(products.length && authToken()){await remoteUpsertProducts(products)}
+    const localBefore=[...products];
+    // Tudo que está local e ainda não está na nuvem é considerado uma pendência legítima.
+    const remoteIds=new Set(remote.map(p=>String(p.id)));
+    const deleted=new Set(readDeletedIds());
+    const missingLocal=localBefore.filter(p=>!remoteIds.has(String(p.id))&&!deleted.has(String(p.id)));
+    if(missingLocal.length)queueUpserts(missingLocal.map(p=>p.id));
+
+    products=mergeLocalAndRemote(remote);
+    await idbPutProducts(products);
+    try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){}
+    render();
+
+    // A fila é enviada sem substituir a lista inteira no Supabase.
+    await flushSyncQueue();
+
     const remoteWa=await remoteLoadWhatsApp();
     if(remoteWa){localStorage.setItem(WKEY,remoteWa);loadWA()}
     else{const localWa=localStorage.getItem(WKEY)||'';if(localWa && authToken())try{await remoteSaveWhatsApp(localWa)}catch(e){}}
-    supabaseOnline=true;
-    const st=document.getElementById('cloudStatus');if(st)st.textContent='☁️ Catálogo sincronizado com a nuvem.';
+    if(pendingSyncCount()===0){
+      supabaseOnline=true;
+      const st=document.getElementById('cloudStatus');if(st)st.textContent='☁️ Catálogo sincronizado com a nuvem.';
+    }
   }catch(e){
     console.warn('Supabase indisponível ou RLS bloqueando a operação:',e);
-    const st=document.getElementById('cloudStatus');if(st)st.textContent='⚠️ Nuvem ainda não sincronizada. O catálogo continua funcionando neste aparelho.';
+    const st=document.getElementById('cloudStatus');if(st)st.textContent='⏳ Dados locais preservados. A nuvem será sincronizada automaticamente quando a conexão estiver disponível.';
   }
 }
 
@@ -529,29 +626,29 @@ const IDB_NAME='MeuCatalogoDigitalDB', IDB_STORE='dados', IDB_KEY='products';
 function openCatalogDB(){return new Promise((resolve,reject)=>{try{if(!('indexedDB' in window))return reject(new Error('IndexedDB indisponível'));const r=indexedDB.open(IDB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(IDB_STORE))r.result.createObjectStore(IDB_STORE)};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('Falha no banco'))}catch(e){reject(e)}})}
 async function idbGetProducts(){const db=await openCatalogDB();return new Promise((resolve,reject)=>{const tx=db.transaction(IDB_STORE,'readonly'),req=tx.objectStore(IDB_STORE).get(IDB_KEY);req.onsuccess=()=>{db.close();resolve(Array.isArray(req.result)?req.result:null)};req.onerror=()=>{db.close();reject(req.error)}})}
 async function idbPutProducts(data){const db=await openCatalogDB();return new Promise((resolve,reject)=>{const tx=db.transaction(IDB_STORE,'readwrite');tx.objectStore(IDB_STORE).put(data,IDB_KEY);tx.oncomplete=()=>{db.close();resolve(true)};tx.onerror=()=>{db.close();reject(tx.error||new Error('Falha ao salvar'))}})}
-async function saveDB(){
+async function saveDB(syncIds=[],deleteIds=[]){
   let localOk=true;
+  // ETAPA 1 — registra a pendência imediatamente. Assim, até uma suspensão do Android
+  // durante o armazenamento local não perde a informação de que esta alteração precisa subir.
+  if(deleteIds?.length)queueRemovals(deleteIds);
+  if(syncIds?.length)queueUpserts(syncIds);
+
+  // ETAPA 2 — armazenamento local. Esta etapa é a confirmação real do botão Salvar.
   try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){localOk=false;console.warn('LocalStorage cheio; usando banco local IndexedDB.',e)}
   try{await idbPutProducts(products)}catch(e){
     if(!localOk) throw new Error('Não foi possível salvar neste aparelho. O armazenamento do navegador está indisponível ou cheio. Faça um backup e tente novamente.');
   }
-  // Depois do salvamento local, sincroniza a lista com a nuvem quando possível.
-  if(await ensureAdminSession()){
-    try{
-      await remoteUpsertProducts(products);
-      supabaseOnline=true;
-      const st=document.getElementById('cloudStatus');
-      if(st)st.textContent='☁️ Produto sincronizado com a nuvem.';
-    }catch(e){
-      console.error('Falha ao sincronizar produtos com Supabase:',e);
-      const st=document.getElementById('cloudStatus');
-      if(st)st.textContent='❌ Erro Supabase: '+e.message;
-      throw e;
-    }
-  }else{
-    throw new Error('LOGIN_REQUIRED — faça login de administrador antes de salvar na nuvem.');
-  }
-  return {synced:true};
+
+  // ETAPA 3 — fila persistente. Nunca depende da nuvem para concluir o salvamento local.
+  // A fila já foi gravada acima e será mantida até o Supabase confirmar.
+
+  // Tenta enviar em segundo plano. Se a tela for bloqueada, a fila permanece gravada
+  // e será retomada quando o catálogo for aberto novamente ou a página voltar a ficar ativa.
+  flushSyncQueue();
+  const pending=pendingSyncCount();
+  const st=document.getElementById('cloudStatus');
+  if(st)st.textContent=pending?'💾 Salvo neste aparelho. ☁️ Sincronização em andamento/pendente.':'☁️ Catálogo sincronizado com a nuvem.';
+  return {synced:pending===0,localSaved:true,pending:pending>0};
 }
 async function syncStorageOnStartup(){
   try{
@@ -875,9 +972,9 @@ async function saveProduct(e){
     clearForm();
     render();
     if(syncResult.synced){
-      alert('✅ Produto salvo e sincronizado com a nuvem!');
+      alert('✅ Produto salvo no aparelho e sincronizado com a nuvem!');
     }else{
-      alert('✅ Produto salvo neste aparelho.\n\n⚠️ A sincronização com a nuvem ficou pendente e será tentada novamente automaticamente.');
+      alert('✅ Produto salvo com segurança neste aparelho.\n\n☁️ A sincronização com a nuvem ficou pendente e será concluída automaticamente. Você pode bloquear a tela ou fechar o navegador sem perder este cadastro.');
     }
     openAdmin();
   }catch(err){
@@ -901,7 +998,14 @@ function edit(id){
 
 async function del(id){
   if(customerModeActive)return;
-  if(confirm('Excluir este produto?')){try{products=products.filter(x=>x.id!==id);await saveDB();try{await remoteDeleteProduct(id)}catch(e){}render()}catch(e){alert('Não foi possível excluir e salvar a alteração.');}}
+  if(confirm('Excluir este produto?')){
+    try{
+      products=products.filter(x=>x.id!==id);
+      await saveDB([], [id]);
+      render();
+      alert('✅ Produto excluído deste aparelho. A exclusão da nuvem será concluída automaticamente.');
+    }catch(e){alert('Não foi possível excluir e salvar a alteração.');}
+  }
 }
 function categories(){return [...new Set(products.map(p=>p.category).filter(Boolean))].sort()}
 function renderChips(){
@@ -1286,12 +1390,18 @@ loadWA();
 applyCustomerMode();
 
 (async function bootstrapCatalog(){
-  // Primeiro carrega o armazenamento local; depois sincroniza com a nuvem.
-  // A ordem evita corrida entre IndexedDB/localStorage e Supabase.
+  // Primeiro carrega o armazenamento local; depois sincroniza a fila com a nuvem.
+  // Assim, uma alteração salva antes de bloquear a tela continua protegida.
   await syncStorageOnStartup();
   render();
   await syncWithSupabase();
+  flushSyncQueue();
 })();
+
+// Retoma pendências quando o Android/Chrome volta a deixar a página ativa.
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncWithSupabase();flushSyncQueue()}});
+window.addEventListener('online',()=>{syncWithSupabase();flushSyncQueue()});
+setInterval(()=>{if(document.visibilityState==='visible'&&pendingSyncCount()>0)flushSyncQueue()},30000);
 
 // O listener usa CAPTURE para interceptar o toque antes do clique do card.
 // Assim, tocar em uma cor nunca abre o produto errado e sempre troca para o cadastro correspondente.
