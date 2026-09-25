@@ -1,5 +1,10 @@
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://tuptrzvdqbaoohlerrfz.supabase.co';
-const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_s9D9xICwKMA6vNLBO3eD6Q_yvUlMiXd';
+const SUPABASE_URL =
+  process.env.SUPABASE_URL ||
+  'https://tuptrzvdqbaoohlerrfz.supabase.co';
+
+const SUPABASE_PUBLISHABLE_KEY =
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
+  'sb_publishable_s9D9xICwKMA6vNLBO3eD6Q_yvUlMiXd';
 
 function esc(value='') {
   return String(value)
@@ -12,7 +17,11 @@ function esc(value='') {
 
 function numberBR(value){
   const n=Number(value);
-  if(!Number.isFinite(n)) return '';
+
+  if(!Number.isFinite(n)){
+    return '';
+  }
+
   return n.toLocaleString('pt-BR',{
     style:'currency',
     currency:'BRL'
@@ -20,20 +29,29 @@ function numberBR(value){
 }
 
 function absoluteOrigin(req){
-  const proto=
-    (req.headers &&
-      (req.headers['x-forwarded-proto'] ||
-       req.headers['x-forwarded-protocol'])) ||
-    'https';
 
-  const host=req.headers && req.headers.host;
+  const proto =
+    (req.headers &&
+      (
+        req.headers['x-forwarded-proto'] ||
+        req.headers['x-forwarded-protocol']
+      )
+    ) || 'https';
+
+  const host =
+    req.headers && req.headers.host;
 
   return `${proto}://${host}`;
 }
 
 function queryParam(req,name){
+
   try{
-    if(req.query && req.query[name] != null){
+
+    if(
+      req.query &&
+      req.query[name] != null
+    ){
       return req.query[name];
     }
 
@@ -43,47 +61,22 @@ function queryParam(req,name){
     ).searchParams.get(name);
 
   }catch(e){
+
     return null;
+
   }
 }
 
-function isBrowserNavigation(req){
-  const dest=String(
-    req.headers?.['sec-fetch-dest'] || ''
-  ).toLowerCase();
-
-  const mode=String(
-    req.headers?.['sec-fetch-mode'] || ''
-  ).toLowerCase();
-
-  return dest === 'document' || mode === 'navigate';
-}
-
 function isPreviewBot(req){
+
   const ua=String(
     req.headers?.['user-agent'] || ''
   ).toLowerCase();
 
-  /*
-    Quando o próprio WhatsApp monta a prévia,
-    normalmente ele consulta o link sem os
-    cabeçalhos de navegação de um navegador.
-
-    Quando uma pessoa toca no link dentro do WhatsApp,
-    o navegador envia cabeçalhos como:
-    sec-fetch-dest=document
-    sec-fetch-mode=navigate
-
-    Nesse caso, tratamos como usuário normal.
-  */
-
-  if(ua.includes('whatsapp')){
-    return !isBrowserNavigation(req);
-  }
-
   const bots=[
     'facebookexternalhit',
     'facebot',
+    'whatsapp',
     'twitterbot',
     'linkedinbot',
     'telegrambot',
@@ -95,25 +88,36 @@ function isPreviewBot(req){
     'pinterestbot'
   ];
 
-  return bots.some(bot=>ua.includes(bot));
+  return bots.some(
+    bot=>ua.includes(bot)
+  );
 }
 
 async function getProduct(id){
-  if(!id) return null;
+
+  if(!id){
+    return null;
+  }
 
   const url =
-    `${SUPABASE_URL}/rest/v1/products?id=eq.` +
-    `${encodeURIComponent(String(id))}&select=*`;
+    `${SUPABASE_URL}/rest/v1/products` +
+    `?id=eq.${encodeURIComponent(String(id))}` +
+    `&select=*`;
 
-  const r=await fetch(url,{
-    headers:{
-      apikey:SUPABASE_PUBLISHABLE_KEY,
-      Accept:'application/json'
+  const r=await fetch(
+    url,
+    {
+      headers:{
+        apikey:SUPABASE_PUBLISHABLE_KEY,
+        Accept:'application/json'
+      }
     }
-  });
+  );
 
   if(!r.ok){
-    throw new Error(`Supabase ${r.status}`);
+    throw new Error(
+      `Supabase ${r.status}`
+    );
   }
 
   const rows=await r.json();
@@ -124,7 +128,8 @@ async function getProduct(id){
 }
 
 function firstPhoto(product){
-  const photos=
+
+  const photos =
     Array.isArray(product?.photos)
       ? product.photos
       : [];
@@ -137,6 +142,7 @@ function firstPhoto(product){
 }
 
 function parseDataImage(data){
+
   const m=String(data||'').match(
     /^data:(image\/[a-zA-Z0-9.+-]+)(?:;charset=[^;]+)?(?:;(base64))?,(.*)$/s
   );
@@ -147,7 +153,7 @@ function parseDataImage(data){
 
   const type=m[1].toLowerCase();
   const body=m[3];
-  const isBase64=m[2] === 'base64';
+  const isBase64=m[2]==='base64';
 
   const buffer=Buffer.from(
     isBase64
@@ -165,9 +171,11 @@ function parseDataImage(data){
 }
 
 async function sendImage(req,res,photo){
+
   const parsed=parseDataImage(photo);
 
   if(parsed){
+
     res.setHeader(
       'Content-Type',
       parsed.type
@@ -183,11 +191,19 @@ async function sendImage(req,res,photo){
       'public, max-age=86400, stale-while-revalidate=604800'
     );
 
-    res.status(200).end(parsed.buffer);
+    res.status(200).end(
+      parsed.buffer
+    );
+
     return;
   }
 
-  if(/^https?:\/\//i.test(String(photo||''))){
+  if(
+    /^https?:\/\//i.test(
+      String(photo||'')
+    )
+  ){
+
     res.setHeader(
       'Location',
       photo
@@ -204,6 +220,7 @@ async function sendImage(req,res,photo){
     );
 
     res.status(302).end();
+
     return;
   }
 
@@ -216,31 +233,39 @@ module.exports = async function handler(req,res){
 
   try{
 
-    const id=queryParam(req,'id');
+    const id=queryParam(
+      req,
+      'id'
+    );
 
-    const imageMode=
+    const imageMode =
       String(
         queryParam(req,'imagem') || ''
       ) === '1';
 
     if(!id){
+
       res.status(400).send(
         'Produto não informado'
       );
+
       return;
     }
 
-    const origin=absoluteOrigin(req);
+    const origin=
+      absoluteOrigin(req);
 
-    const appUrl=
+    const appUrl =
       `${origin}/?cliente=1&produto=` +
-      `${encodeURIComponent(String(id))}`;
+      encodeURIComponent(
+        String(id)
+      );
 
     /*
-      USUÁRIO NORMAL
-      --------------
-      Vai direto para o catálogo.
-      Não consulta o Supabase aqui.
+      Usuário normal:
+      vai imediatamente para o catálogo.
+
+      Não consulta o Supabase.
       Não gera página intermediária.
     */
 
@@ -265,23 +290,26 @@ module.exports = async function handler(req,res){
     }
 
     /*
-      ROBÔ DE PRÉVIA
-      --------------
-      Aqui sim consultamos o Supabase
-      para montar a prévia do WhatsApp,
-      Facebook, Telegram etc.
+      Robôs de prévia:
+      consultam o produto para gerar
+      a imagem, nome, categoria e preço
+      que aparecem no WhatsApp.
     */
 
-    const product=await getProduct(id);
+    const product=
+      await getProduct(id);
 
     if(!product){
+
       res.status(404).send(
         'Produto não encontrado'
       );
+
       return;
     }
 
-    const photo=firstPhoto(product);
+    const photo=
+      firstPhoto(product);
 
     if(imageMode){
 
@@ -294,35 +322,47 @@ module.exports = async function handler(req,res){
       return;
     }
 
-    const shareUrl=
+    const shareUrl =
       `${origin}/api/produto?id=` +
-      `${encodeURIComponent(String(product.id))}`;
+      encodeURIComponent(
+        String(product.id)
+      );
 
-    const imageUrl=
+    const imageUrl =
       `${origin}/api/produto?id=` +
-      `${encodeURIComponent(String(product.id))}` +
-      `&imagem=1`;
+      encodeURIComponent(
+        String(product.id)
+      ) +
+      '&imagem=1';
 
-    const name=
+    const name =
       product.name ||
       'Produto';
 
-    const price=
-      numberBR(product.price);
+    const price =
+      numberBR(
+        product.price
+      );
 
     const category=[
+
       product.category,
+
       product.subcategory,
+
       product.subfinal ||
-        product.subsubcategory
+      product.subsubcategory
+
     ]
       .filter(Boolean)
       .join(' › ');
 
-    const description=
-      (category
-        ? `${category}. `
-        : '') +
+    const description =
+      (
+        category
+          ? `${category}. `
+          : ''
+      ) +
       (
         price
           ? `Preço: ${price}.`
@@ -425,14 +465,14 @@ ${esc(name)} | Meu Catálogo
 <body>
 
 <p>
-Abrindo o produto
-<strong>${esc(name)}</strong>…
+  Abrindo o produto
+  <strong>${esc(name)}</strong>…
 </p>
 
 <p>
 
 <a href="${esc(appUrl)}">
-Abrir produto
+  Abrir produto
 </a>
 
 </p>
@@ -464,7 +504,9 @@ location.replace(
       'public, max-age=3600, stale-while-revalidate=86400'
     );
 
-    res.status(200).send(html);
+    res.status(200).send(
+      html
+    );
 
   }catch(err){
 
