@@ -24,7 +24,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:18px}
 .card{background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px #00000010;display:flex;flex-direction:column}
 .pic{aspect-ratio:1/1;background:#eee;display:flex;align-items:center;justify-content:center;position:relative}.pic img{width:100%;height:100%;object-fit:cover}.tag{position:absolute;top:10px;left:10px;background:var(--red);color:#fff;border-radius:8px;padding:6px 8px;font-size:12px;font-weight:800}
-.body{padding:15px}.cat{font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase}.name{font-size:18px;font-weight:800;margin:5px 0}.desc{font-size:13px;color:#5e636b;min-height:38px;line-height:1.35}.price{font-size:26px;font-weight:900;margin:8px 0}.old{text-decoration:line-through;color:#8b8f96;font-size:13px}.install{font-size:12px;color:var(--green);font-weight:700}.small{font-size:12px;color:var(--muted)}
+.body{padding:15px}.cat{font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase}.name{font-size:18px;font-weight:800;margin:5px 0}.desc{font-size:13px;color:#5e636b;min-height:38px;line-height:1.35}.price{font-size:26px;font-weight:900;margin:8px 0}.outOfStockDetail{color:#d10b2f;font-weight:900;font-size:16px;margin:10px 0;line-height:1.15}.outOfStock{color:#d10b2f;font-weight:900;font-size:16px;margin:8px 0;line-height:1.15}.old{text-decoration:line-through;color:#8b8f96;font-size:13px}.install{font-size:12px;color:var(--green);font-weight:700}.small{font-size:12px;color:var(--muted)}
 .dimensions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:#fafbfe;border:1px solid #e5e7eb;border-radius:14px;margin:14px 0;padding:10px 4px}
 .dimension{text-align:center;padding:5px 8px;border-right:1px solid #e1e4ea}
 .dimension:last-child{border-right:0}
@@ -334,6 +334,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
     </label></div>
     <div class="full colorHelp">🎨 <b>Família de cores:</b> escolha qualquer produto da mesma família. Você pode vincular 2, 3, 4 ou quantas cores quiser. No anúncio, cada cor vira um botão que abre o cadastro daquela cor.</div>
     <div><label>Produto em destaque?<select id="featured"><option value="no">Não</option><option value="yes">Sim</option></select></label></div>
+    <div class="full" style="padding:12px;border:1px solid #f0c4cc;border-radius:12px;background:#fff7f8"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input id="outOfStock" type="checkbox" style="width:20px;height:20px;margin:0;flex:0 0 auto"><span style="font-size:15px;color:#a50022"><b>🔴 Produto sem estoque</b><small style="display:block;color:#6b7078;font-weight:600;margin-top:3px">Quando marcado, o preço fica oculto no catálogo e aparece “Estoque indisponível!” no lugar dele.</small></span></label></div>
     <div class="full"><label>Descrição<textarea id="description" placeholder="Detalhes, medidas, cor, material, condições etc."></textarea></label></div>
     <div><label>Largura<input id="width" placeholder="134 cm"></label></div>
     <div><label>Altura<input id="height" placeholder="190 cm"></label></div>
@@ -445,8 +446,8 @@ async function ensureAdminSession(){
   if(authSession?.refresh_token && await refreshAuthSession())return true;
   return false;
 }
-function productToRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subfinal:p.subsubcategory||'',price:num(p.price),old_price:p.oldPrice?num(p.oldPrice):null,color:p.color||'',variant_group:p.variantGroup||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[])}}
-function productFromRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subsubcategory:p.subfinal||'',price:p.price||'',oldPrice:p.old_price||'',color:p.color||'',variantGroup:p.variant_group||p.id||'',stock:p.stock??0,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[]),photo:Array.isArray(p.photos)&&p.photos.length?p.photos[0]:(p.photo||'')}}
+function productToRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subfinal:p.subsubcategory||'',price:num(p.price),old_price:p.oldPrice?num(p.oldPrice):null,color:p.color||'',variant_group:p.variantGroup||p.id||'',stock:p.outOfStock?-1:(p.stock===-1?0:(p.stock??0)),featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[])}}
+function productFromRemote(p){return {id:String(p.id),name:p.name||'',category:p.category||'',subcategory:p.subcategory||'',subsubcategory:p.subfinal||'',price:p.price||'',oldPrice:p.old_price||'',color:p.color||'',variantGroup:p.variant_group||p.id||'',stock:p.stock??0,outOfStock:Number(p.stock)===-1,featured:!!p.featured,description:p.description||'',width:p.width||'',height:p.height||'',depth:p.depth||'',installments:p.installments||'',photos:Array.isArray(p.photos)?p.photos:(p.photo?[p.photo]:[]),photo:Array.isArray(p.photos)&&p.photos.length?p.photos[0]:(p.photo||'')}}
 async function remoteLoadProducts(){
   const rows=await sbFetch('/products?select=*&order=created_at.asc');
   return Array.isArray(rows)?rows.map(productFromRemote):[];
@@ -691,6 +692,7 @@ async function syncStorageOnStartup(){
 }
 function val(id){return document.getElementById(id).value}
 function setv(id,v){document.getElementById(id).value=v??''}
+function checked(id){return !!document.getElementById(id)?.checked}
 function num(v){let n=parseFloat(String(v||'').replace(/\./g,'').replace(',','.'));return isNaN(n)?0:n}
 function brl(v){return num(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
@@ -1261,7 +1263,8 @@ async function saveProduct(e){
       oldPrice:val('oldPrice').trim(),
       color:val('color').trim(),
       variantGroup:ensureVariantFamily(),
-      stock:old?.stock??0,
+      stock:checked('outOfStock')? -1 : (old?.stock===-1 ? 0 : (old?.stock??0)),
+      outOfStock:checked('outOfStock'),
       featured:val('featured')==='yes',
       description:val('description').trim(),
       width:val('width').trim(),
@@ -1295,7 +1298,7 @@ function edit(id){
   if(customerModeActive)return;
   let p=products.find(x=>x.id===id);if(!p)return;
   openAdmin();
-  setv('editId',p.id);setv('name',p.name);setv('category',p.category);fillSubcategorySelect(p.subcategory||'');updateSubSubcategorySelect(p.subsubcategory||'');setv('price',p.price);setv('oldPrice',p.oldPrice);setv('color',p.color);populateVariantBase(p.variantGroup ? (products.find(x=>x.id!==p.id && variantFamilyId(x)===p.variantGroup)?.id||'') : '');setv('featured',p.featured?'yes':'no');setv('description',p.description);setv('width',p.width);setv('height',p.height);setv('depth',p.depth);setv('installments',p.installments);
+  setv('editId',p.id);setv('name',p.name);setv('category',p.category);fillSubcategorySelect(p.subcategory||'');updateSubSubcategorySelect(p.subsubcategory||'');setv('price',p.price);setv('oldPrice',p.oldPrice);setv('color',p.color);populateVariantBase(p.variantGroup ? (products.find(x=>x.id!==p.id && variantFamilyId(x)===p.variantGroup)?.id||'') : '');setv('featured',p.featured?'yes':'no');document.getElementById('outOfStock').checked=!!p.outOfStock;setv('description',p.description);setv('width',p.width);setv('height',p.height);setv('depth',p.depth);setv('installments',p.installments);
   let photos=p.photos||(p.photo?[p.photo]:[]);
   formPhotos=[...photos];
   formPhotoKeys=formPhotos.map(()=>newPhotoKey());
@@ -1420,9 +1423,9 @@ function renderProductDetail(id){
       <div class="detailInfo">
         ${breadcrumbHTML(p)}
         <h1>${esc(p.name)}</h1>
-        ${p.oldPrice?`<div class="detailOld">${brl(p.oldPrice)}</div>`:''}
-        <div class="detailPrice">${brl(p.price)}</div>
-        ${p.installments?`<div class="install">💳 ${esc(p.installments)}</div>`:''}
+        ${p.outOfStock?'':(p.oldPrice?`<div class="detailOld">${brl(p.oldPrice)}</div>`:'')}
+        ${p.outOfStock?`<div class="outOfStockDetail">Estoque indisponível!</div>`:`<div class="detailPrice">${brl(p.price)}</div>`}
+        ${(!p.outOfStock&&p.installments)?`<div class="install">💳 ${esc(p.installments)}</div>`:''}
         ${renderVariantSwatches(p,true)}
         <div class="detailDescription">${esc(p.description||'')}</div>
         ${dims?`<div class="detailDimensions">
@@ -1555,13 +1558,13 @@ function render(){
     c.innerHTML=`<div class="pic">${photos.length?`<img id="main-${p.id}" data-product-id="${esc(p.id)}" data-photo-index="0" src="${photos[0]}" alt="${esc(p.name)}" style="touch-action:pan-y;user-select:none;-webkit-user-drag:none" ontouchstart="cardTouchStart(event)" ontouchend="cardTouchEnd(event)">`:'<span style="font-size:55px">📦</span>'}${num(p.oldPrice)>num(p.price)?'<span class="tag">OFERTA</span>':''}</div>
     ${photos.length>1?`<div class="gallery">${photos.map((s,i)=>`<img src="${s}" class="${i===0?'active':''}" onclick="changePhoto('${p.id}',${i})">`).join('')}</div>`:''}
     <div class="body">${breadcrumbHTML(p)}<div class="name">${esc(p.name)}</div><div class="desc">${esc(p.description)}</div>
-    ${p.oldPrice?`<div class="old">${brl(p.oldPrice)}</div>`:''}<div class="price">${brl(p.price)}</div>
+    ${(!p.outOfStock&&p.oldPrice)?`<div class="old">${brl(p.oldPrice)}</div>`:''}${p.outOfStock?`<div class="outOfStock">Estoque indisponível!</div>`:`<div class="price">${brl(p.price)}`}
     ${(currentView==='list' && (p.width||p.height||p.depth))?`<div class="dimensions">
       ${p.width?`<div class="dimension"><div class="dimIcon">↔</div><div class="dimLabel">Largura</div><strong>${esc(p.width)}</strong></div>`:''}
       ${p.height?`<div class="dimension"><div class="dimIcon">↕</div><div class="dimLabel">Altura</div><strong>${esc(p.height)}</strong></div>`:''}
       ${p.depth?`<div class="dimension"><div class="dimIcon">↗</div><div class="dimLabel">Profundidade</div><strong>${esc(p.depth)}</strong></div>`:''}
     </div>`:''}
-    ${p.installments?`<div class="install">💳 ${esc(p.installments)}</div>`:''}
+    ${(!p.outOfStock&&p.installments)?`<div class="install">💳 ${esc(p.installments)}</div>`:''}
     ${renderVariantSwatches(p,false)}
     <div class="actions"><button class="buy" onclick="buy('${p.id}');event.stopPropagation()">WhatsApp</button>${adminButtons}</div></div>`;
     c.addEventListener('click',()=>openProductDetail(p.id));
