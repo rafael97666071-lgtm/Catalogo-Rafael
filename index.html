@@ -117,6 +117,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .detailPrice{font-size:34px;font-weight:900;margin:10px 0}
 .detailOld{text-decoration:line-through;color:#888}
 .detailWhatsApp{display:block;width:100%;border:0;border-radius:12px;padding:15px;background:#16883e;color:#fff;font-weight:900;font-size:18px;margin-top:15px}
+.detailShare{display:block;width:100%;border:0;border-radius:10px;padding:11px;background:#eef2ff;color:#1739a6;font-weight:900;font-size:16px;margin-top:8px}
 .detailEdit,.detailDelete{width:100%;border:0;border-radius:10px;padding:11px;font-weight:800;margin-top:8px}
 .detailEdit{background:#eef2ff;color:#1739a6}
 .detailDelete{background:#fff0f0;color:#b00020}
@@ -629,6 +630,7 @@ let products=loadProductsCompat();
 let activeCat='';
 let currentView=localStorage.getItem(VIEWKEY)||localStorage.getItem('catalog_view_mode')||'grid';
 let customerModeActive=new URLSearchParams(location.search).get('cliente')==='1';
+let sharedProductId='';
 
 const IDB_NAME='MeuCatalogoDigitalDB', IDB_STORE='dados', IDB_KEY='products';
 function openCatalogDB(){return new Promise((resolve,reject)=>{try{if(!('indexedDB' in window))return reject(new Error('IndexedDB indisponível'));const r=indexedDB.open(IDB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(IDB_STORE))r.result.createObjectStore(IDB_STORE)};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('Falha no banco'))}catch(e){reject(e)}})}
@@ -1407,6 +1409,7 @@ function renderProductDetail(id){
           ${p.depth?`<div class="detailDimension"><span>↗ Profundidade</span><strong>${esc(p.depth)}</strong></div>`:''}
         </div>`:''}
         <button class="detailWhatsApp" onclick="buy('${p.id}');return false">📱 Falar comigo pelo WhatsApp</button>
+        <button class="detailShare" onclick="shareProduct('${p.id}');return false">🔗 Compartilhar produto</button>
         ${!customerModeActive?`<button class="detailEdit" onclick="closeProductDetail();edit('${p.id}')">✏️ Editar produto</button>
         <button class="detailDelete" onclick="del('${p.id}');closeProductDetail()">🗑️ Excluir produto</button>`:''}
       </div>
@@ -1617,8 +1620,24 @@ function shareCatalog(){
   else if(navigator.clipboard)navigator.clipboard.writeText(url).then(()=>alert(filtered?'Link da seleção copiado!':'Link do catálogo copiado!')).catch(()=>prompt('Copie este link:',url));
   else prompt('Copie este link:',url);
 }
+function shareProduct(id){
+  const p=products.find(x=>String(x.id)===String(id));
+  if(!p)return;
+  const url=new URL('/api/produto',window.location.origin);
+  url.searchParams.set('id',String(p.id));
+  const shareUrl=url.toString();
+  const text=`Veja este produto no meu catálogo: ${p.name}`;
+  if(navigator.share){
+    navigator.share({title:p.name,text,url:shareUrl}).catch(()=>{});
+  }else if(navigator.clipboard){
+    navigator.clipboard.writeText(shareUrl).then(()=>alert('Link do produto copiado!')).catch(()=>prompt('Copie este link:',shareUrl));
+  }else{
+    prompt('Copie este link:',shareUrl);
+  }
+}
 function loadSharedFilters(){
   const params=new URLSearchParams(window.location.search);
+  sharedProductId=params.get('produto')||'';
   if(params.get('cliente')!=='1')return;
 
   // Recupera os filtros do link antes da primeira renderização.
@@ -1680,6 +1699,9 @@ applyCustomerMode();
   render();
   await syncWithSupabase();
   flushSyncQueue();
+  if(sharedProductId && products.some(p=>String(p.id)===String(sharedProductId))){
+    setTimeout(()=>openProductDetail(sharedProductId),50);
+  }
 })();
 
 // Retoma pendências quando o Android/Chrome volta a deixar a página ativa.
