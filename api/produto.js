@@ -22,28 +22,79 @@ function absoluteOrigin(req){
   return `${proto}://${host}`;
 }
 
+function queryParam(req,name){
+  try{
+    if(req.query && req.query[name] != null) return req.query[name];
+    return new URL(req.url,`https://${req.headers.host}`).searchParams.get(name);
+  }catch(e){
+    return null;
+  }
+}
+
+function isPreviewBot(req){
+  const ua=String(req.headers?.['user-agent'] || '').toLowerCase();
+
+  const bots=[
+    'facebookexternalhit',
+    'facebot',
+    'whatsapp',
+    'twitterbot',
+    'linkedinbot',
+    'telegrambot',
+    'slackbot',
+    'discordbot',
+    'googlebot',
+    'bingbot',
+    'applebot',
+    'pinterestbot'
+  ];
+
+  return bots.some(bot=>ua.includes(bot));
+}
+
 async function getProduct(id){
   if(!id) return null;
+
   const url = `${SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(String(id))}&select=*`;
-  const r = await fetch(url,{headers:{apikey:SUPABASE_PUBLISHABLE_KEY,Accept:'application/json'}});
+
+  const r = await fetch(url,{
+    headers:{
+      apikey:SUPABASE_PUBLISHABLE_KEY,
+      Accept:'application/json'
+    }
+  });
+
   if(!r.ok) throw new Error(`Supabase ${r.status}`);
+
   const rows=await r.json();
+
   return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
 function firstPhoto(product){
   const photos=Array.isArray(product?.photos) ? product.photos : [];
+
   if(photos.length) return photos[0];
+
   return product?.photo || '';
 }
 
 function parseDataImage(data){
-  const m=String(data||'').match(/^data:(image\/[a-zA-Z0-9.+-]+)(?:;charset=[^;]+)?(?:;(base64))?,(.*)$/s);
+  const m=String(data||'').match(
+    /^data:(image\/[a-zA-Z0-9.+-]+)(?:;charset=[^;]+)?(?:;(base64))?,(.*)$/s
+  );
+
   if(!m) return null;
+
   const type=m[1].toLowerCase();
   const body=m[3];
   const isBase64=m[2]==='base64';
-  const buffer=Buffer.from(isBase64 ? body : decodeURIComponent(body), isBase64 ? 'base64' : 'utf8');
+
+  const buffer=Buffer.from(
+    isBase64 ? body : decodeURIComponent(body),
+    isBase64 ? 'base64' : 'utf8'
+  );
+
   return {type,buffer};
 }
 
@@ -52,14 +103,28 @@ async function sendImage(req,res,photo){
 
   if(parsed){
     res.setHeader('Content-Type',parsed.type);
-    res.setHeader('Cache-Control','public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800');
+    res.setHeader(
+      'Cache-Control',
+      'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800'
+    );
+    res.setHeader(
+      'CDN-Cache-Control',
+      'public, max-age=86400, stale-while-revalidate=604800'
+    );
     res.status(200).end(parsed.buffer);
     return;
   }
 
   if(/^https?:\/\//i.test(String(photo||''))){
     res.setHeader('Location',photo);
-    res.setHeader('Cache-Control','public, max-age=3600, s-maxage=86400');
+    res.setHeader(
+      'Cache-Control',
+      'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800'
+    );
+    res.setHeader(
+      'CDN-Cache-Control',
+      'public, max-age=86400, stale-while-revalidate=604800'
+    );
     res.status(302).end();
     return;
   }
@@ -69,13 +134,33 @@ async function sendImage(req,res,photo){
 
 module.exports = async function handler(req,res){
   try{
-    const id = req.query?.id || new URL(req.url,`https://${req.headers.host}`).searchParams.get('id');
+    const id=queryParam(req,'id');
+    const imageMode=String(queryParam(req,'imagem') || '') === '1';
 
-    const imageMode = String(
-      req.query?.imagem ||
-      new URL(req.url,`https://${req.headers.host}`).searchParams.get('imagem') ||
-      ''
-    ) === '1';
+    if(!id){
+      res.status(400).send('Produto não informado');
+      return;
+    }
+
+    const origin=absoluteOrigin(req);
+
+    const appUrl=
+      `${origin}/?cliente=1&produto=${encodeURIComponent(String(id))}`;
+
+    /*
+      IMPORTANTE:
+      Usuários normais não precisam consultar o Supabase nesta rota.
+      Eles vão direto para o catálogo, reduzindo bastante o tempo de abertura.
+
+      Somente robôs de prévia (WhatsApp, Facebook, Twitter etc.)
+      precisam buscar o produto para montar o Open Graph.
+    */
+    if(!imageMode && !isPreviewBot(req)){
+      res.setHeader('Cache-Control','no-store');
+      res.setHeader('Location',appUrl);
+      res.status(302).end();
+      return;
+    }
 
     const product=await getProduct(id);
 
@@ -91,16 +176,13 @@ module.exports = async function handler(req,res){
       return;
     }
 
-    const origin=absoluteOrigin(req);
+    const shareUrl=
+      `${origin}/api/produto?id=${encodeURIComponent(String(product.id))}`;
 
-    const shareUrl=`${origin}/api/produto?id=${encodeURIComponent(String(product.id))}`;
-
-    const appUrl=`${origin}/?cliente=1&produto=${encodeURIComponent(String(product.id))}`;
-
-    const imageUrl=`${origin}/api/produto?id=${encodeURIComponent(String(product.id))}&imagem=1`;
+    const imageUrl=
+      `${origin}/api/produto?id=${encodeURIComponent(String(product.id))}&imagem=1`;
 
     const name=product.name || 'Produto';
-
     const price=numberBR(product.price);
 
     const category=[
@@ -122,39 +204,28 @@ module.exports = async function handler(req,res){
 <title>${esc(name)} | Meu Catálogo</title>
 
 <meta property="og:title" content="${esc(name)}" />
-
 <meta property="og:type" content="website" />
-
 <meta property="og:url" content="${esc(shareUrl)}" />
 
 <meta property="og:image" content="${esc(imageUrl)}" />
-
 <meta property="og:image:secure_url" content="${esc(imageUrl)}" />
-
 <meta property="og:image:type" content="image/jpeg" />
-
 <meta property="og:image:alt" content="${esc(name)}" />
 
 <meta property="og:description" content="${esc(description)}" />
-
 <meta property="og:site_name" content="Meu Catálogo | Casas Bahia" />
 
 <meta name="twitter:card" content="summary_large_image" />
-
 <meta name="twitter:title" content="${esc(name)}" />
-
 <meta name="twitter:description" content="${esc(description)}" />
-
 <meta name="twitter:image" content="${esc(imageUrl)}" />
 
 <link rel="canonical" href="${esc(appUrl)}" />
 
 <meta http-equiv="refresh" content="0;url=${esc(appUrl)}">
-
 </head>
 
 <body>
-
 <p>Abrindo o produto <strong>${esc(name)}</strong>…</p>
 
 <p>
@@ -164,7 +235,6 @@ module.exports = async function handler(req,res){
 <script>
 location.replace(${JSON.stringify(appUrl)});
 </script>
-
 </body>
 </html>`;
 
@@ -172,13 +242,17 @@ location.replace(${JSON.stringify(appUrl)});
 
     res.setHeader(
       'Cache-Control',
-      'public, max-age=60, s-maxage=300, stale-while-revalidate=600'
+      'public, max-age=60, s-maxage=3600, stale-while-revalidate=86400'
+    );
+
+    res.setHeader(
+      'CDN-Cache-Control',
+      'public, max-age=3600, stale-while-revalidate=86400'
     );
 
     res.status(200).send(html);
 
   }catch(err){
-
     console.error(err);
 
     res.status(500).send(
