@@ -1602,7 +1602,7 @@ function render(){
       ${p.depth?`<div class="dimension"><div class="dimIcon">↗</div><div class="dimLabel">Profundidade</div><strong>${esc(p.depth)}</strong></div>`:''}
     </div>`:''}
     ${(!p.outOfStock&&p.installments)?`<div class="install">💳 ${esc(p.installments)}</div>`:''}
-    ${renderVariantSwatches(p,false)}
+    ${currentView==='list'?renderVariantSwatches(p,false):''}
     <div class="actions"><button class="buy" onclick="buy('${p.id}');event.stopPropagation()">WhatsApp</button>${adminButtons}</div></div>`;
     c.addEventListener('click',()=>openProductDetail(p.id));
     g.appendChild(c);
