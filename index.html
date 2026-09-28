@@ -233,6 +233,19 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 }
 
 <style>
+/* AJUSTE FINAL APROVADO — Grade e Lista sem botões; Detalhes preservam os botões */
+.grid.view-grid .actions,
+.grid.view-list .actions{
+  display:none!important;
+}
+
+/* Medidas da Lista no mesmo porte visual do produto aberto */
+.grid.view-list .dimension strong{
+  font-size:20px!important;
+}
+</style>
+
+<style>
 /* PADRÃO ÚNICO DAS MEDIDAS — Grade, Lista e produto aberto */
 .dimension strong,
 .detailDimension strong{
@@ -260,6 +273,13 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 </style>
 </style>
 </style>
+</style>
+
+<style>
+/* ÚLTIMO AJUSTE — aplica somente à Grade/Lista, sem alterar Detalhes */
+.grid.view-grid .actions,
+.grid.view-list .actions{display:none!important;}
+.grid.view-list .dimension strong{font-size:20px!important;}
 </style>
 </head>
 <body>
