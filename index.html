@@ -1569,16 +1569,45 @@ function setView(mode){
   // Isso garante que Grade não crie medidas e Lista crie as medidas normalmente.
   render();
 }
+function normalizeSearchText(value){
+  return String(value||'')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase()
+    .replace(/[\-_/.,;:!?()[\]{}]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+function getSearchTerms(value){
+  return normalizeSearchText(value).split(' ').filter(Boolean);
+}
+function searchScore(p,terms,rawQuery){
+  if(!terms.length)return 0;
+  const text=normalizeSearchText([p.name,p.category,p.subcategory||'',p.subsubcategory||'',p.description||''].join(' '));
+  const name=normalizeSearchText(p.name);
+  const phrase=normalizeSearchText(rawQuery);
+  const matched=terms.reduce((n,t)=>n+(text.includes(t)?1:0),0);
+  if(!matched)return 0;
+  let score=matched*100;
+  if(matched===terms.length)score+=1000;
+  if(phrase && name.includes(phrase))score+=500;
+  return score;
+}
 function render(){
   renderChips();
-  let q=val('search').toLowerCase(),sort=val('sort');
+  let rawQ=val('search').trim(),q=normalizeSearchText(rawQ),terms=getSearchTerms(rawQ),sort=val('sort');
   let a=products.filter(p=>
     (!activeCat||p.category===activeCat)&&
     (!activeSub||p.subcategory===activeSub)&&
     (!activeSubSub||p.subsubcategory===activeSubSub)&&
-    (!q||(p.name+' '+p.category+' '+(p.subcategory||'')+' '+(p.subsubcategory||'')+' '+p.description).toLowerCase().includes(q))
+    (!terms.length||searchScore(p,terms,rawQ)>0)
   );
-  a.sort((x,y)=>sort==='low'?num(x.price)-num(y.price):sort==='high'?num(y.price)-num(x.price):sort==='name'?x.name.localeCompare(y.name):Number(y.featured)-Number(x.featured));
+  a.sort((x,y)=>{
+    if(terms.length){
+      const relevance=searchScore(y,terms,rawQ)-searchScore(x,terms,rawQ);
+      if(relevance)return relevance;
+    }
+    return sort==='low'?num(x.price)-num(y.price):sort==='high'?num(y.price)-num(x.price):sort==='name'?x.name.localeCompare(y.name):Number(y.featured)-Number(x.featured);
+  });
   document.getElementById('statProducts').textContent=products.length;
   document.getElementById('statCats').textContent=categories().length;
   document.getElementById('statDeals').textContent=products.filter(p=>num(p.oldPrice)>num(p.price)).length;
