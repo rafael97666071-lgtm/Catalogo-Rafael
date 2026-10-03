@@ -8,10 +8,14 @@
 <meta property="og:title" content="Catálogo Casas Bahia">
 <meta property="og:description" content="Veja meu catálogo completo de produtos.">
 <meta property="og:url" content="https://catalogocasasbahia.vercel.app/?cliente=1">
-<meta property="og:image" content="https://catalogocasasbahia.vercel.app/catalogo-preview.png">
+<meta property="og:image" content="https://catalogocasasbahia.vercel.app/catalogo-preview.png?v=2">
+<meta property="og:image:secure_url" content="https://catalogocasasbahia.vercel.app/catalogo-preview.png?v=2">
+<meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1536">
 <meta property="og:image:height" content="1536">
 <meta property="og:image:alt" content="Catálogo Casas Bahia">
+<link rel="canonical" href="https://catalogocasasbahia.vercel.app/?cliente=1">
+<meta name="description" content="Veja meu catálogo completo de produtos.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Catálogo Casas Bahia">
 <meta name="twitter:description" content="Veja meu catálogo completo de produtos.">
@@ -738,7 +742,7 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&l
 const TAXONOMY={
   'Móveis':{
     'Quartos':['Guarda-roupas e Roupeiros','Cômodas','Cabeceiras','Camas','Camas Box','Criados-mudos','Penteadeiras','Sapateiras','Beliches'],
-    'Cozinhas':['Cozinhas','Mesas de Jantar','Cadeiras','Bancos','Balcões','Cristaleiras','Armários Aéreos','Aéreos para Geladeira','Paneleiros'],
+    'Cozinhas':['Cozinhas','Mesas de Jantar','Cadeiras','Bancos','Armários de Cozinha','Balcões','Cristaleiras'],
     'Salas':['Racks e Painéis','Sofás','Poltronas','Mesas de Centro','Mesas Laterais','Estantes','Aparadores'],
     'Escritórios':['Escrivaninhas','Cadeiras de Escritório','Estantes e Armários','Gaveteiros'],
     'Áreas Externas':['Mesas','Cadeiras','Bancos','Conjuntos para Área Externa'],
@@ -1569,45 +1573,16 @@ function setView(mode){
   // Isso garante que Grade não crie medidas e Lista crie as medidas normalmente.
   render();
 }
-function normalizeSearchText(value){
-  return String(value||'')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .toLowerCase()
-    .replace(/[\-_/.,;:!?()[\]{}]+/g,' ')
-    .replace(/\s+/g,' ')
-    .trim();
-}
-function getSearchTerms(value){
-  return normalizeSearchText(value).split(' ').filter(Boolean);
-}
-function searchScore(p,terms,rawQuery){
-  if(!terms.length)return 0;
-  const text=normalizeSearchText([p.name,p.category,p.subcategory||'',p.subsubcategory||'',p.description||''].join(' '));
-  const name=normalizeSearchText(p.name);
-  const phrase=normalizeSearchText(rawQuery);
-  const matched=terms.reduce((n,t)=>n+(text.includes(t)?1:0),0);
-  if(!matched)return 0;
-  let score=matched*100;
-  if(matched===terms.length)score+=1000;
-  if(phrase && name.includes(phrase))score+=500;
-  return score;
-}
 function render(){
   renderChips();
-  let rawQ=val('search').trim(),q=normalizeSearchText(rawQ),terms=getSearchTerms(rawQ),sort=val('sort');
+  let q=val('search').toLowerCase(),sort=val('sort');
   let a=products.filter(p=>
     (!activeCat||p.category===activeCat)&&
     (!activeSub||p.subcategory===activeSub)&&
     (!activeSubSub||p.subsubcategory===activeSubSub)&&
-    (!terms.length||searchScore(p,terms,rawQ)>0)
+    (!q||(p.name+' '+p.category+' '+(p.subcategory||'')+' '+(p.subsubcategory||'')+' '+p.description).toLowerCase().includes(q))
   );
-  a.sort((x,y)=>{
-    if(terms.length){
-      const relevance=searchScore(y,terms,rawQ)-searchScore(x,terms,rawQ);
-      if(relevance)return relevance;
-    }
-    return sort==='low'?num(x.price)-num(y.price):sort==='high'?num(y.price)-num(x.price):sort==='name'?x.name.localeCompare(y.name):Number(y.featured)-Number(x.featured);
-  });
+  a.sort((x,y)=>sort==='low'?num(x.price)-num(y.price):sort==='high'?num(y.price)-num(x.price):sort==='name'?x.name.localeCompare(y.name):Number(y.featured)-Number(x.featured));
   document.getElementById('statProducts').textContent=products.length;
   document.getElementById('statCats').textContent=categories().length;
   document.getElementById('statDeals').textContent=products.filter(p=>num(p.oldPrice)>num(p.price)).length;
@@ -1631,7 +1606,7 @@ function render(){
       ${p.depth?`<div class="dimension"><div class="dimIcon">↗</div><div class="dimLabel">Profundidade</div><strong>${esc(p.depth)}</strong></div>`:''}
     </div>`:''}
     ${(!p.outOfStock&&p.installments)?`<div class="install">💳 ${esc(p.installments)}</div>`:''}
-    ${currentView==='list'?renderVariantSwatches(p,false):''}
+    ${renderVariantSwatches(p,false)}
     <div class="actions"><button class="buy" onclick="buy('${p.id}');event.stopPropagation()">WhatsApp</button>${adminButtons}</div></div>`;
     c.addEventListener('click',()=>openProductDetail(p.id));
     g.appendChild(c);
@@ -1685,6 +1660,8 @@ function hasCatalogFilters(f){
 function publicUrl(){
   const u=new URL(window.location.href);
   u.searchParams.set('cliente','1');
+  // Nova versão do link para o WhatsApp refazer a leitura da prévia.
+  u.searchParams.set('pv','2');
 
   // O link compartilhado leva exatamente o estado atual do catálogo:
   // busca, departamento, subcategoria, nível final, ordenação e visualização.
