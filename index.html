@@ -1786,15 +1786,35 @@ loadWA();
 applyCustomerMode();
 
 (async function bootstrapCatalog(){
-  // Para links individuais, abre o produto primeiro e sincroniza o restante depois.
+  // Para links individuais, abre o produto imediatamente com os dados já
+  // disponíveis no aparelho. A sincronização completa fica em segundo plano.
   if(sharedProductId){
-    await syncStorageOnStartup();
-    render();
 
+    // 1) Caminho mais rápido: o produto já está no array carregado do localStorage.
     if(products.some(p=>String(p.id)===String(sharedProductId))){
       openProductDetail(sharedProductId);
     }else{
-      const opened=await loadSharedProductFast(sharedProductId);
+      // 2) Segundo caminho: tenta o IndexedDB sem reconstruir/renderizar o catálogo.
+      let opened=false;
+      try{
+        const saved=await idbGetProducts();
+        if(Array.isArray(saved)&&saved.length){
+          const localProduct=saved.find(p=>String(p.id)===String(sharedProductId));
+          if(localProduct){
+            products=saved;
+            try{localStorage.setItem(KEY,JSON.stringify(products))}catch(e){}
+            openProductDetail(sharedProductId);
+            opened=true;
+          }
+        }
+      }catch(e){}
+
+      // 3) Último recurso: busca somente o produto na nuvem.
+      if(!opened){
+        opened=await loadSharedProductFast(sharedProductId);
+      }
+
+      // 4) Fallback final: sincronização completa, somente se necessário.
       if(!opened){
         await syncWithSupabase();
         if(products.some(p=>String(p.id)===String(sharedProductId))){
@@ -1803,7 +1823,8 @@ applyCustomerMode();
       }
     }
 
-    // Nunca bloqueia a abertura do produto esperando o catálogo inteiro.
+    // A atualização completa do catálogo continua em segundo plano.
+    syncStorageOnStartup();
     syncWithSupabase();
     flushSyncQueue();
     return;
