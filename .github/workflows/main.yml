@@ -1,0 +1,32 @@
+name: Migrar Supabase para Turso
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Fazer apenas teste, sem alterar o Turso"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  migrar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar arquivos do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Executar migração
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: node migrar-supabase-para-turso.js
